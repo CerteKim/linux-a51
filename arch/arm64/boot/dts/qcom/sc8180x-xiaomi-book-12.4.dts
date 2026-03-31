@@ -23,6 +23,7 @@
 		serial0 = &uart13;
 	};
 
+/*
 	chosen {
 		#address-cells = <2>;
 		#size-cells = <2>;
@@ -39,6 +40,7 @@
 			format = "a8r8g8b8";
 		};
 	};
+*/
 
 	gpio-keys {
 		compatible = "gpio-keys";
@@ -423,10 +425,10 @@
 	};
 };
 
-&i2c1 {
-	clock-frequency = <100000>;
+&i2c2 {
+	clock-frequency = <400000>;
 
-	pinctrl-0 = <&i2c1_active>;
+	pinctrl-0 = <&i2c2_active>;
 	pinctrl-names = "default";
 
 	status = "okay";
@@ -517,12 +519,45 @@
         vdd1-supply = <&vreg_l1c_1p8>;
         vdd-supply = <&vreg_l12a_1p8>;
 
-	backlight = <&pmc8180c_wled>;
-        // There are two GPIOs defined in ACPI (GPU0)
-        // GPIO 190: DSI Panel Reset
-        // GPIO 6: DSI Mode Select
-        reset-gpios = <&tlmm 190 GPIO_ACTIVE_LOW>;
+		backlight = <&pmc8180c_wled>;
+		// There are two GPIOs defined in ACPI (GPU0)
+		// GPIO 190: DSI Panel Reset
+		// GPIO 6: DSI Mode Select
+        reset-gpios = <&tlmm 116 GPIO_ACTIVE_LOW>;
+		enable-gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
 
+		panel-timing {
+            hactive = <1600>;
+            vactive = <2560>;
+            hfront-porch = <60>;
+            hback-porch = <40>;
+            hsync-len = <20>;
+            vfront-porch = <112>;
+            vback-porch = <18>;
+            vsync-len = <4>;
+        };
+
+		dsc {
+            slice-width = <1600>;
+            slice-height = <40>;
+            version = <0x11>;  // 1.1
+        };
+
+		panel-init-sequence = [
+            37 04 00
+            39 B9 83 12 1A 55 00
+            15 BD 01
+            39 CB 1F 55 03 28 0D 08 0A
+            FF 78
+            15 BD 00
+            39 CD 81 00 3D 77 18 7A 00
+            05 11
+            FF 78
+            39 B2 00 6A 40 00 00 14 6E 40 73 02 80 21 21 00 00 F0
+            05 29
+            FF 78
+        ];
+		
         port {
             panel_in: endpoint {
                 remote-endpoint = <&mdss_dsi0_out>;
@@ -552,7 +587,8 @@
 // FIXME: Unknown Pin for PCIE2
 &pcie2 {
 	perst-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
-	wake-gpios = <&tlmm 104 GPIO_ACTIVE_HIGH>;
+
+	//wake-gpios = <&tlmm 104 GPIO_ACTIVE_HIGH>;
 
 	//vddpe-3v3-supply = <&vreg_nvme_3p3>;
 
@@ -756,6 +792,14 @@
 		function = "qup1";
 
 		bias-pull-up = <1>;
+		drive-strength = <2>;
+	};
+
+	i2c2_active: i2c2-active-state {
+		pins = "gpio126", "gpio127";
+		function = "qup2";
+
+		bias-pull-up;
 		drive-strength = <2>;
 	};
 
