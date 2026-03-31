@@ -540,7 +540,7 @@
 		power-domains = <&rpmhpd SC8180X_MMCX>;
 		required-opps = <&rpmhpd_opp_nom>;
 		regulator-name = "MMCX";
-	}
+	};
 
 	pmu {
 		compatible = "arm,armv8-pmuv3";

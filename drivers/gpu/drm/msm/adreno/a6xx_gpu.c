@@ -1048,7 +1048,7 @@ static bool a6xx_ucode_check_version(struct a6xx_gpu *a6xx_gpu,
 	} else if (!strcmp(sqe_name, "a660_sqe.fw")) {
 		ret = true;
 	} else if (!strcmp(sqe_name, "a680_sqe.fw")) {
-+		ret = true;
+		ret = true;
 	} else {
 		DRM_DEV_ERROR(&gpu->pdev->dev,
 			"unknown GPU, add it to a6xx_ucode_check_version()!!\n");

@@ -52,31 +52,43 @@ static int hx83121a_on(struct hx83121a_panel *ctx)
 {
 	struct mipi_dsi_device *dsi = ctx->dsi;
 	struct device *dev = &dsi->dev;
-	int ret;
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
 
 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
-	mipi_dsi_dcs_write_seq(dsi, HX83121A_SETEXTC, 0xb9, 0x83, 0x12, 0x1a, 0x55, 0x00);
-	mipi_dsi_dcs_write_seq(dsi, HX83121A_SETBANK, 0x81);
-	mipi_dsi_dcs_write_seq(dsi, HX83121A_SETCLOCK, 0x1f, 0x55, 0x03, 0x28, 0x0d, 0x08, 0x0a);
-	msleep(120);
-	mipi_dsi_dcs_write_seq(dsi, HX83121A_SETBANK, 0x00);
-	mipi_dsi_dcs_write_seq(dsi, HX83121A_UNKNOWN1, 0x81, 0x00, 0x3d, 0x77, 0x18, 0x7a, 0x00);
-	ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
-	if (ret < 0) {
-		dev_err(dev, "Failed to exit sleep mode: %d\n", ret);
-		return ret;
-	}
+
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETEXTC, 0xb9, 0x83, 0x12, 0x1a, 0x55, 0x00);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETBANK, 0x81);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETCLOCK, 0x1f, 0x55, 0x03, 0x28, 0x0d, 0x08, 0x0a);
+
+	if (dsi_ctx.accum_err)
+		goto err;
+
 	msleep(120);
 
-	mipi_dsi_dcs_write_seq(dsi, HX83121A_SETDISP, 0x00, 0x6a, 0x40, 0x00, 0x00, 0x14, 0x6e, 0x40, 0x73, 0x02, 0x80, 0x21, 0x21, 0x00, 0x00, 0xf0);
-	ret = mipi_dsi_dcs_set_display_on(dsi);
-	if (ret < 0) {
-		dev_err(dev, "Failed to set display on: %d\n", ret);
-		return ret;
-	}
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETBANK, 0x00);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_UNKNOWN1, 0x81, 0x00, 0x3d, 0x77, 0x18, 0x7a, 0x00);
+
+	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+
+	if (dsi_ctx.accum_err)
+		goto err;
+
+	msleep(120);
+
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETDISP, 0x00, 0x6a, 0x40, 0x00, 0x00, 0x14, 0x6e, 0x40, 0x73, 0x02, 0x80, 0x20, 0x21, 0x21, 0x00, 0x00, 0xf0);
+
+	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+
+	if (dsi_ctx.accum_err)
+		goto err;
+
 	msleep(120);
 
 	return 0;
+
+err:
+	dev_err(dev, "DSI command sequence failed: %d\n", dsi_ctx.accum_err);
+	return dsi_ctx.accum_err;
 }
 
 static int hx83121a_disable(struct drm_panel *panel)

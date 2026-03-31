@@ -16,7 +16,7 @@
 #include "sc8180x-pmics.dtsi"
 
 / {
-	model = "Xiami Book 12.4";
+	model = "Xiaomi Book 12.4";
 	compatible = "xiaomi,book-12.4", "qcom,sc8180x";
 
 	aliases {
@@ -30,7 +30,7 @@
         
         // From UEFI Memory Map
         // 0x80600000, 0x02400000, "Display Reserved",  AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH_XN
-		framebuffer0: framebuffer@c6200000 {
+		framebuffer0: framebuffer@80600000 {
 			compatible = "simple-framebuffer";
 			reg = <0x0 0x80600000 0x0 0x02400000>;
 			width = <1600>;
@@ -507,19 +507,20 @@
 
 &mdss_dsi0 {
     status = "okay";
-	vdda-supply = <&vreg_l3c_1p2>;
+    vdda-supply = <&vreg_l3c_1p2>;
+    refgen-supply = <&refgen>;
 
     panel@0 {
         compatible = "csot,pnc357db14";
         reg = <0>;
-		vdd1-supply = <&vreg_l1c_1p8>;
-		vsn-supply = <&lcdb_dummy>;
-		vsp-supply = <&lcdb_dummy>;
+        vddi-supply = <&vreg_l12a_1p8>;
+        vdd1-supply = <&vreg_l1c_1p8>;
+        vdd-supply = <&vreg_l12a_1p8>;
 
-		backlight = <&pmc8180c_wled>;
-		// There are two GPIOs defined in ACPI (GPU0)
-		// GPIO 190: DSI Panel Reset
-		// GPIO 6: DSI Mode Select
+	backlight = <&pmc8180c_wled>;
+        // There are two GPIOs defined in ACPI (GPU0)
+        // GPIO 190: DSI Panel Reset
+        // GPIO 6: DSI Mode Select
         reset-gpios = <&tlmm 190 GPIO_ACTIVE_LOW>;
 
         port {
@@ -531,12 +532,13 @@
 };
 
 &mdss_dsi0_out {
-    data-lanes = <0 1 2 3>;
-    remote-endpoint = <&panel_in>;
+	data-lanes = <0 1 2 3>;
+	remote-endpoint = <&panel_in>;
 };
 
 &mdss_dsi0_phy {
     status = "okay";
+    vdds-supply = <&vreg_l5e_0p88>;
 };
 
 // Device don't support eDP
