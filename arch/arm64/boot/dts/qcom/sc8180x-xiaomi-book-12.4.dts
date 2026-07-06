@@ -508,72 +508,80 @@
 };
 
 &mdss_dsi0 {
-    status = "okay";
-    vdda-supply = <&vreg_l3c_1p2>;
-    refgen-supply = <&refgen>;
+	status = "okay";
+	vdda-supply = <&vreg_l3c_1p2>;
+	refgen-supply = <&refgen>;
+	qcom,dual-dsi-mode;
+	qcom,sync-dual-dsi;
+	qcom,master-dsi;
 
-    panel@0 {
-        compatible = "csot,pnc357db14";
-        reg = <0>;
-        vddi-supply = <&vreg_l12a_1p8>;
-        vdd1-supply = <&vreg_l1c_1p8>;
-        vdd-supply = <&vreg_l12a_1p8>;
+	panel@0 {
+		compatible = "csot,pnc357db14";
+		reg = <0>;
+		link2 = <&panel_secondary>;
+		vddi-supply = <&vreg_l12a_1p8>;
+		vdd1-supply = <&vreg_l1c_1p8>;
+		vdd-supply = <&vreg_l12a_1p8>;
 
 		backlight = <&pmc8180c_wled>;
-		// There are two GPIOs defined in ACPI (GPU0)
-		// GPIO 190: DSI Panel Reset
-		// GPIO 6: DSI Mode Select
-        reset-gpios = <&tlmm 116 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&tlmm 116 GPIO_ACTIVE_LOW>;
 		enable-gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
 
-		panel-timing {
-            hactive = <1600>;
-            vactive = <2560>;
-            hfront-porch = <60>;
-            hback-porch = <40>;
-            hsync-len = <20>;
-            vfront-porch = <112>;
-            vback-porch = <18>;
-            vsync-len = <4>;
-        };
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
 
-		dsc {
-            slice-width = <1600>;
-            slice-height = <40>;
-            version = <0x11>;  // 1.1
-        };
+			port@0 {
+				reg = <0>;
 
-		panel-init-sequence = [
-            37 04 00
-            39 B9 83 12 1A 55 00
-            15 BD 01
-            39 CB 1F 55 03 28 0D 08 0A
-            FF 78
-            15 BD 00
-            39 CD 81 00 3D 77 18 7A 00
-            05 11
-            FF 78
-            39 B2 00 6A 40 00 00 14 6E 40 73 02 80 21 21 00 00 F0
-            05 29
-            FF 78
-        ];
-		
-        port {
-            panel_in: endpoint {
-                remote-endpoint = <&mdss_dsi0_out>;
-            };
-        };
-    };
+				panel_in0: endpoint {
+					remote-endpoint = <&mdss_dsi0_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				panel_in1: endpoint {
+					remote-endpoint = <&mdss_dsi1_out>;
+				};
+			};
+		};
+	};
 };
 
 &mdss_dsi0_out {
 	data-lanes = <0 1 2 3>;
-	remote-endpoint = <&panel_in>;
+	remote-endpoint = <&panel_in0>;
 };
 
 &mdss_dsi0_phy {
-    status = "okay";
-    vdds-supply = <&vreg_l5e_0p88>;
+	status = "okay";
+	vdds-supply = <&vreg_l5e_0p88>;
+};
+
+&mdss_dsi1 {
+	status = "okay";
+	vdda-supply = <&vreg_l3c_1p2>;
+	qcom,dual-dsi-mode;
+	qcom,sync-dual-dsi;
+	assigned-clock-parents = <&mdss_dsi0_phy DSI_BYTE_PLL_CLK>,
+				 <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>;
+
+	panel_secondary: panel@0 {
+		compatible = "csot,pnc357db14";
+		reg = <0>;
+	};
+};
+
+&mdss_dsi1_out {
+	data-lanes = <0 1 2 3>;
+	remote-endpoint = <&panel_in1>;
+};
+
+&mdss_dsi1_phy {
+	status = "okay";
+	vdds-supply = <&vreg_l5e_0p88>;
 };
 
 // Device don't support eDP

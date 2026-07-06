@@ -28,9 +28,12 @@
 struct hx83121a_panel {
 	struct drm_panel panel;
 	struct mipi_dsi_device *dsi;
+	struct mipi_dsi_device *link2;
 	struct regulator_bulk_data supplies[3];
 	struct drm_dsc_config dsc;
 	struct gpio_desc *reset_gpio;
+	struct gpio_desc *enable_gpio;
+	bool secondary;
 };
 
 static inline struct hx83121a_panel *to_hx83121a_panel(struct drm_panel *panel)
@@ -48,6 +51,20 @@ static void hx83121a_reset(struct hx83121a_panel *ctx)
 	msleep(50);
 }
 
+static void hx83121a_init_dsc(struct hx83121a_panel *ctx)
+{
+	ctx->dsc.dsc_version_major = 1;
+	ctx->dsc.dsc_version_minor = 1;
+
+	ctx->dsc.slice_height = 40;
+	ctx->dsc.slice_width = 1600;
+	WARN_ON(1600 % ctx->dsc.slice_width);
+	ctx->dsc.slice_count = 1600 / ctx->dsc.slice_width;
+	ctx->dsc.bits_per_component = 8;
+	ctx->dsc.bits_per_pixel = 8 << 4; /* 4 fractional bits */
+	ctx->dsc.block_pred_enable = true;
+}
+
 static int hx83121a_on(struct hx83121a_panel *ctx)
 {
 	struct mipi_dsi_device *dsi = ctx->dsi;
@@ -55,29 +72,60 @@ static int hx83121a_on(struct hx83121a_panel *ctx)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
 
 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+	if (ctx->link2)
+		ctx->link2->mode_flags |= MIPI_DSI_MODE_LPM;
 
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETEXTC, 0xb9, 0x83, 0x12, 0x1a, 0x55, 0x00);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETBANK, 0x81);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETCLOCK, 0x1f, 0x55, 0x03, 0x28, 0x0d, 0x08, 0x0a);
+	if (ctx->link2) {
+		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi, ctx->link2,
+						  HX83121A_SETEXTC,
+						  0xb9, 0x83, 0x12, 0x1a, 0x55, 0x00);
+		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi, ctx->link2,
+						  HX83121A_SETBANK, 0x81);
+		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi, ctx->link2,
+						  HX83121A_SETCLOCK,
+						  0x1f, 0x55, 0x03, 0x28, 0x0d, 0x08, 0x0a);
+	} else {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETEXTC, 0xb9, 0x83, 0x12, 0x1a, 0x55, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETBANK, 0x81);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETCLOCK, 0x1f, 0x55, 0x03, 0x28, 0x0d, 0x08, 0x0a);
+	}
 
 	if (dsi_ctx.accum_err)
 		goto err;
 
 	msleep(120);
 
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETBANK, 0x00);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_UNKNOWN1, 0x81, 0x00, 0x3d, 0x77, 0x18, 0x7a, 0x00);
-
-	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+	if (ctx->link2) {
+		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi, ctx->link2,
+						  HX83121A_SETBANK, 0x00);
+		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi, ctx->link2,
+						  HX83121A_UNKNOWN1,
+						  0x81, 0x00, 0x3d, 0x77, 0x18, 0x7a, 0x00);
+		mipi_dsi_dual(mipi_dsi_dcs_exit_sleep_mode_multi, &dsi_ctx,
+			      dsi, ctx->link2);
+	} else {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETBANK, 0x00);
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_UNKNOWN1, 0x81, 0x00, 0x3d, 0x77, 0x18, 0x7a, 0x00);
+		mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
+	}
 
 	if (dsi_ctx.accum_err)
 		goto err;
 
 	msleep(120);
 
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETDISP, 0x00, 0x6a, 0x40, 0x00, 0x00, 0x14, 0x6e, 0x40, 0x73, 0x02, 0x80, 0x20, 0x21, 0x21, 0x00, 0x00, 0xf0);
-
-	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+	if (ctx->link2) {
+		mipi_dsi_dual_dcs_write_seq_multi(&dsi_ctx, dsi, ctx->link2,
+						  HX83121A_SETDISP,
+						  0x00, 0x6a, 0x40, 0x00, 0x00, 0x14,
+						  0x6e, 0x40, 0x73, 0x02, 0x80, 0x20,
+						  0x21, 0x21, 0x00, 0x00, 0xf0);
+		mipi_dsi_dual(mipi_dsi_dcs_set_display_on_multi, &dsi_ctx,
+			      dsi, ctx->link2);
+	} else {
+		mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETDISP, 0x00, 0x6a, 0x40, 0x00, 0x00, 0x14, 0x6e, 0x40, 0x73, 0x02, 0x80, 0x20, 0x21, 0x21, 0x00, 0x00, 0xf0);
+		mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
+	}
 
 	if (dsi_ctx.accum_err)
 		goto err;
@@ -96,18 +144,34 @@ static int hx83121a_disable(struct drm_panel *panel)
 	struct hx83121a_panel *ctx = to_hx83121a_panel(panel);
 	struct mipi_dsi_device *dsi = ctx->dsi;
 	struct device *dev = &dsi->dev;
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
 	int ret;
 
 	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
+	if (ctx->link2)
+		ctx->link2->mode_flags &= ~MIPI_DSI_MODE_LPM;
 
-	ret = mipi_dsi_dcs_set_display_off(dsi);
+	if (ctx->link2) {
+		mipi_dsi_dual(mipi_dsi_dcs_set_display_off_multi, &dsi_ctx,
+			      dsi, ctx->link2);
+		ret = dsi_ctx.accum_err;
+	} else {
+		ret = mipi_dsi_dcs_set_display_off(dsi);
+	}
 	if (ret < 0) {
 		dev_err(dev, "Failed to set display off: %d\n", ret);
 		return ret;
 	}
 	msleep(20);
 
-	ret = mipi_dsi_dcs_enter_sleep_mode(dsi);
+	if (ctx->link2) {
+		dsi_ctx.accum_err = 0;
+		mipi_dsi_dual(mipi_dsi_dcs_enter_sleep_mode_multi, &dsi_ctx,
+			      dsi, ctx->link2);
+		ret = dsi_ctx.accum_err;
+	} else {
+		ret = mipi_dsi_dcs_enter_sleep_mode(dsi);
+	}
 	if (ret < 0) {
 		dev_err(dev, "Failed to enter sleep mode: %d\n", ret);
 		return ret;
@@ -130,11 +194,16 @@ static int hx83121a_prepare(struct drm_panel *panel)
 		return ret;
 	}
 
+	if (ctx->enable_gpio)
+		gpiod_set_value_cansleep(ctx->enable_gpio, 1);
+
 	hx83121a_reset(ctx);
 
 	ret = hx83121a_on(ctx);
 	if (ret < 0) {
 		dev_err(dev, "Failed to initialize panel: %d\n", ret);
+		if (ctx->enable_gpio)
+			gpiod_set_value_cansleep(ctx->enable_gpio, 0);
 		gpiod_set_value_cansleep(ctx->reset_gpio, 1);
 		regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
 		return ret;
@@ -144,14 +213,30 @@ static int hx83121a_prepare(struct drm_panel *panel)
 
 	ret = mipi_dsi_picture_parameter_set(ctx->dsi, &pps);
 	if (ret < 0) {
-		dev_err(panel->dev, "failed to transmit PPS: %d\n", ret);
+		dev_err(panel->dev, "failed to transmit PPS on link1: %d\n", ret);
 		return ret;
+	}
+
+	if (ctx->link2) {
+		ret = mipi_dsi_picture_parameter_set(ctx->link2, &pps);
+		if (ret < 0) {
+			dev_err(panel->dev, "failed to transmit PPS on link2: %d\n", ret);
+			return ret;
+		}
 	}
 
 	ret = mipi_dsi_compression_mode(ctx->dsi, true);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable compression mode: %d\n", ret);
 		return ret;
+	}
+
+	if (ctx->link2) {
+		ret = mipi_dsi_compression_mode(ctx->link2, true);
+		if (ret < 0) {
+			dev_err(dev, "failed to enable compression mode on link2: %d\n", ret);
+			return ret;
+		}
 	}
 
 	msleep(50); /* TODO: Is this panel-dependent? */
@@ -164,6 +249,8 @@ static int hx83121a_unprepare(struct drm_panel *panel)
 	struct hx83121a_panel *ctx = to_hx83121a_panel(panel);
 
 	gpiod_set_value_cansleep(ctx->reset_gpio, 1);
+	if (ctx->enable_gpio)
+		gpiod_set_value_cansleep(ctx->enable_gpio, 0);
 	regulator_bulk_disable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
 
 	return 0;
@@ -201,24 +288,13 @@ static int hx83121a_probe(struct mipi_dsi_device *dsi)
 {
 	struct device *dev = &dsi->dev;
 	struct hx83121a_panel *ctx;
+	struct mipi_dsi_device *secondary = NULL;
+	struct device_node *np;
 	int ret;
 
 	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
-
-	ctx->supplies[0].supply = "vdd1";
-	ctx->supplies[1].supply = "vsn";
-	ctx->supplies[2].supply = "vsp";
-	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ctx->supplies),
-				      ctx->supplies);
-	if (ret < 0)
-		return dev_err_probe(dev, ret, "Failed to get regulators\n");
-
-	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
-	if (IS_ERR(ctx->reset_gpio))
-		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
-				     "Failed to get reset-gpios\n");
 
 	ctx->dsi = dsi;
 	mipi_dsi_set_drvdata(dsi, ctx);
@@ -227,43 +303,77 @@ static int hx83121a_probe(struct mipi_dsi_device *dsi)
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST;
 
+	hx83121a_init_dsc(ctx);
+	dsi->dsc = &ctx->dsc;
+
+	np = of_parse_phandle(dsi->dev.of_node, "link2", 0);
+	if (np) {
+		secondary = of_find_mipi_dsi_device_by_node(np);
+		of_node_put(np);
+		if (!secondary)
+			return -EPROBE_DEFER;
+	}
+
+	if (!secondary) {
+		ctx->secondary = true;
+
+		ret = mipi_dsi_attach(dsi);
+		if (ret < 0)
+			return dev_err_probe(dev, ret, "Failed to attach secondary DSI host\n");
+
+		return 0;
+	}
+
+	ctx->link2 = secondary;
+	secondary->dsc = &ctx->dsc;
+
+	ctx->supplies[0].supply = "vdd1";
+	ctx->supplies[1].supply = "vddi";
+	ctx->supplies[2].supply = "vdd";
+	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(ctx->supplies),
+				      ctx->supplies);
+	if (ret < 0) {
+		put_device(&secondary->dev);
+		return dev_err_probe(dev, ret, "Failed to get regulators\n");
+	}
+
+	ctx->reset_gpio = devm_gpiod_get(dev, "reset", GPIOD_OUT_HIGH);
+	if (IS_ERR(ctx->reset_gpio)) {
+		put_device(&secondary->dev);
+		return dev_err_probe(dev, PTR_ERR(ctx->reset_gpio),
+				     "Failed to get reset-gpios\n");
+	}
+
+	ctx->enable_gpio = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_LOW);
+	if (IS_ERR(ctx->enable_gpio)) {
+		put_device(&secondary->dev);
+		return dev_err_probe(dev, PTR_ERR(ctx->enable_gpio),
+				     "Failed to get enable-gpios\n");
+	}
+
 	drm_panel_init(&ctx->panel, dev, &hx83121a_panel_funcs,
 		       DRM_MODE_CONNECTOR_DSI);
 	ctx->panel.prepare_prev_first = true;
 
 	ret = drm_panel_of_backlight(&ctx->panel);
 	if (ret)
-		return dev_err_probe(dev, ret, "Failed to get backlight\n");
+		goto err_put_secondary;
 
 	drm_panel_add(&ctx->panel);
-
-	/* This panel only supports DSC; unconditionally enable it */
-	dsi->dsc = &ctx->dsc;
-
-	ctx->dsc.dsc_version_major = 1;
-	ctx->dsc.dsc_version_minor = 1;
-
-	/* TODO: Pass slice_per_pkt = 1 */
-	ctx->dsc.slice_height = 40;
-	ctx->dsc.slice_width = 1600;
-	/*
-	 * TODO: hdisplay should be read from the selected mode once
-	 * it is passed back to drm_panel (in prepare?)
-	 */
-	WARN_ON(1600 % ctx->dsc.slice_width);
-	ctx->dsc.slice_count = 1600 / ctx->dsc.slice_width;
-	ctx->dsc.bits_per_component = 8;
-	ctx->dsc.bits_per_pixel = 8 << 4; /* 4 fractional bits */
-	ctx->dsc.block_pred_enable = true;
 
 	ret = mipi_dsi_attach(dsi);
 	if (ret < 0) {
 		dev_err_probe(dev, ret, "Failed to attach to DSI host\n");
-		drm_panel_remove(&ctx->panel);
-		return ret;
+		goto err_remove_panel;
 	}
 
 	return 0;
+
+err_remove_panel:
+	drm_panel_remove(&ctx->panel);
+err_put_secondary:
+	put_device(&secondary->dev);
+	return ret;
 }
 
 static void hx83121a_remove(struct mipi_dsi_device *dsi)
@@ -271,11 +381,21 @@ static void hx83121a_remove(struct mipi_dsi_device *dsi)
 	struct hx83121a_panel *ctx = mipi_dsi_get_drvdata(dsi);
 	int ret;
 
+	if (ctx->secondary) {
+		ret = mipi_dsi_detach(dsi);
+		if (ret < 0)
+			dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
+		return;
+	}
+
 	ret = mipi_dsi_detach(dsi);
 	if (ret < 0)
 		dev_err(&dsi->dev, "Failed to detach from DSI host: %d\n", ret);
 
 	drm_panel_remove(&ctx->panel);
+
+	if (ctx->link2)
+		put_device(&ctx->link2->dev);
 }
 
 static const struct of_device_id hx83121a_of_match[] = {
