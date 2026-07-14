@@ -212,6 +212,15 @@
 		vin-supply = <&vph_pwr>;
 	};
 
+	refgen: regulator-refgen {
+		compatible = "regulator-fixed";
+		regulator-name = "refgen";
+		regulator-min-microvolt = <1200000>;
+		regulator-max-microvolt = <1200000>;
+
+		vin-supply = <&vreg_l3c_1p2>;
+	};
+
 	usbprim-sbu-mux {
 		compatible = "pericom,pi3usb102", "gpio-sbu-mux";
 
@@ -565,6 +574,8 @@
 	vdda-supply = <&vreg_l3c_1p2>;
 	qcom,dual-dsi-mode;
 	qcom,sync-dual-dsi;
+	#address-cells = <1>;
+	#size-cells = <0>;
 	assigned-clock-parents = <&mdss_dsi0_phy DSI_BYTE_PLL_CLK>,
 				 <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>;
 
