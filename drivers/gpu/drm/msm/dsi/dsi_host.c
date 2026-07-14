@@ -149,11 +149,6 @@ struct msm_dsi_host {
 	u32 err_work_state;
 	struct work_struct err_work;
 	struct workqueue_struct *workqueue;
-	u32 err_work_timeout_status;
-	u32 err_work_fifo_status;
-	u32 err_work_status0;
-	u32 err_work_dln0_phy_err;
-	u32 err_work_clk_status;
 
 	/* DSI 6G TX buffer*/
 	struct drm_gem_object *tx_gem_obj;
@@ -651,12 +646,6 @@ static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 	msm_host->byte_clk_rate = dsi_byte_clk_get_rate(&msm_host->base, is_bonded_dsi,
 							msm_host->mode);
 
-	dev_info(&msm_host->pdev->dev,
-		 "PNC357 DSI clocks: pclk=%lu byteclk=%lu lanes=%u flags=%lx dsc=%u bonded=%u\n",
-		 msm_host->pixel_clk_rate, msm_host->byte_clk_rate,
-		 msm_host->lanes, msm_host->mode_flags, !!msm_host->dsc,
-		 is_bonded_dsi);
-
 	DBG("pclk=%lu, bclk=%lu", msm_host->pixel_clk_rate,
 				msm_host->byte_clk_rate);
 }
@@ -780,6 +769,10 @@ bool msm_dsi_host_is_wide_bus_enabled(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
+	/*
+	 * Video-mode DSC timing is programmed as a 3-byte-per-pclk path.
+	 * Keep wide bus limited to command mode until video timing supports it.
+	 */
 	if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO)
 		return false;
 
@@ -953,11 +946,6 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
 	reg |= DSI_VIDEO_COMPRESSION_MODE_CTRL_EOL_BYTE_NUM(eol_byte_num);
 	reg |= DSI_VIDEO_COMPRESSION_MODE_CTRL_EN;
 
-	dev_info(&msm_host->pdev->dev,
-		 "PNC357 DSI DSC: cmd=%u slice_count=%u slice_chunk=%u pkt_per_line=%u eol=%u bytes_per_pkt=%u reg=%08x\n",
-		 is_cmd_mode, dsc->slice_count, dsc->slice_chunk_size,
-		 pkt_per_line, eol_byte_num, bytes_per_pkt, reg);
-
 	if (is_cmd_mode) {
 		reg_ctrl = dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL);
 		reg_ctrl2 = dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2);
@@ -989,8 +977,6 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 	u32 va_start = v_total - mode->vsync_start;
 	u32 va_end = va_start + mode->vdisplay;
 	u32 hdisplay = mode->hdisplay;
-	u32 bytes_per_line = 0;
-	u32 bytes_per_pclk = 0;
 	u32 wc;
 	int ret;
 	bool wide_bus_enabled = msm_dsi_host_is_wide_bus_enabled(&msm_host->base);
@@ -1014,6 +1000,7 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 
 	if (msm_host->dsc) {
 		struct drm_dsc_config *dsc = msm_host->dsc;
+		u32 bytes_per_pclk;
 
 		/* update dsc params with timing params */
 		if (!dsc || !mode->hdisplay || !mode->vdisplay) {
@@ -1052,21 +1039,12 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		else
 			bytes_per_pclk = 3;
 
-		bytes_per_line = msm_dsc_get_bytes_per_line(msm_host->dsc);
-		hdisplay = DIV_ROUND_UP(bytes_per_line, bytes_per_pclk);
+		hdisplay = DIV_ROUND_UP(msm_dsc_get_bytes_per_line(msm_host->dsc),
+					bytes_per_pclk);
 
 		h_total += hdisplay;
 		ha_end = ha_start + hdisplay;
 	}
-
-	dev_info(&msm_host->pdev->dev,
-		 "PNC357 DSI timing: flags=%lx wide=%u mode=%ux%u clock=%u h=%u/%u/%u/%u v=%u/%u/%u/%u dsc_line_bytes=%u bytes_per_pclk=%u active_h=%u-%u total_h=%u\n",
-		 msm_host->mode_flags, wide_bus_enabled,
-		 mode->hdisplay, mode->vdisplay, mode->clock,
-		 mode->hdisplay, mode->hsync_start, mode->hsync_end,
-		 mode->htotal, mode->vdisplay, mode->vsync_start,
-		 mode->vsync_end, mode->vtotal, bytes_per_line,
-		 bytes_per_pclk, ha_start, ha_end, h_total);
 
 	if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO) {
 		if (msm_host->dsc)
@@ -1563,22 +1541,12 @@ static void dsi_err_worker(struct work_struct *work)
 		container_of(work, struct msm_dsi_host, err_work);
 	u32 status = msm_host->err_work_state;
 
-	pr_err_ratelimited("%s: status=%x timeout=%08x fifo=%08x status0=%08x dln0=%08x clk=%08x\n",
-			   __func__, status, msm_host->err_work_timeout_status,
-			   msm_host->err_work_fifo_status,
-			   msm_host->err_work_status0,
-			   msm_host->err_work_dln0_phy_err,
-			   msm_host->err_work_clk_status);
+	pr_err_ratelimited("%s: status=%x\n", __func__, status);
 	if (status & DSI_ERR_STATE_MDP_FIFO_UNDERFLOW)
 		dsi_sw_reset(msm_host);
 
 	/* It is safe to clear here because error irq is disabled. */
 	msm_host->err_work_state = 0;
-	msm_host->err_work_timeout_status = 0;
-	msm_host->err_work_fifo_status = 0;
-	msm_host->err_work_status0 = 0;
-	msm_host->err_work_dln0_phy_err = 0;
-	msm_host->err_work_clk_status = 0;
 
 	/* enable dsi error interrupt */
 	dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_ERROR, 1);
@@ -1606,7 +1574,6 @@ static void dsi_timeout_status(struct msm_dsi_host *msm_host)
 
 	if (status) {
 		dsi_write(msm_host, REG_DSI_TIMEOUT_STATUS, status);
-		msm_host->err_work_timeout_status |= status;
 		msm_host->err_work_state |= DSI_ERR_STATE_TIMEOUT;
 	}
 }
@@ -1623,7 +1590,6 @@ static void dsi_dln0_phy_err(struct msm_dsi_host *msm_host)
 			DSI_DLN0_PHY_ERR_DLN0_ERR_CONTENTION_LP0 |
 			DSI_DLN0_PHY_ERR_DLN0_ERR_CONTENTION_LP1)) {
 		dsi_write(msm_host, REG_DSI_DLN0_PHY_ERR, status);
-		msm_host->err_work_dln0_phy_err |= status;
 		msm_host->err_work_state |= DSI_ERR_STATE_DLN0_PHY;
 	}
 }
@@ -1637,7 +1603,6 @@ static void dsi_fifo_status(struct msm_dsi_host *msm_host)
 	/* fifo underflow, overflow */
 	if (status) {
 		dsi_write(msm_host, REG_DSI_FIFO_STATUS, status);
-		msm_host->err_work_fifo_status |= status;
 		msm_host->err_work_state |= DSI_ERR_STATE_FIFO;
 		if (status & DSI_FIFO_STATUS_CMD_MDP_FIFO_UNDERFLOW)
 			msm_host->err_work_state |=
@@ -1653,7 +1618,6 @@ static void dsi_status(struct msm_dsi_host *msm_host)
 
 	if (status & DSI_STATUS0_INTERLEAVE_OP_CONTENTION) {
 		dsi_write(msm_host, REG_DSI_STATUS0, status);
-		msm_host->err_work_status0 |= status;
 		msm_host->err_work_state |=
 			DSI_ERR_STATE_INTERLEAVE_OP_CONTENTION;
 	}
@@ -1667,7 +1631,6 @@ static void dsi_clk_status(struct msm_dsi_host *msm_host)
 
 	if (status & DSI_CLK_STATUS_PLL_UNLOCKED) {
 		dsi_write(msm_host, REG_DSI_CLK_STATUS, status);
-		msm_host->err_work_clk_status |= status;
 		msm_host->err_work_state |= DSI_ERR_STATE_PLL_UNLOCKED;
 	}
 }

@@ -18,10 +18,8 @@
 #include <drm/drm_panel.h>
 #include <drm/drm_probe_helper.h>
 
-#include <video/mipi_display.h>
-
 /* Manufacturer specific DSI commands */
-#define HX83121A_SETDISP 0xb2 
+#define HX83121A_SETDISP 0xb2
 #define HX83121A_SETEXTC 0xb9
 #define HX83121A_SETBANK 0xbd
 #define HX83121A_UNKNOWN1 0xcd
@@ -71,8 +69,6 @@ static int hx83121a_on(struct hx83121a_panel *ctx)
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = dsi };
 	int ret;
 
-	dev_info(dev, "PNC357: init sequence start\n");
-
 	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
 
 	ret = mipi_dsi_set_maximum_return_packet_size(dsi, 4);
@@ -80,24 +76,19 @@ static int hx83121a_on(struct hx83121a_panel *ctx)
 		dev_err(dev, "Failed to set maximum return packet size: %d\n", ret);
 		return ret;
 	}
-	dev_info(dev, "PNC357: max return packet size set\n");
 
 	/* PNC357DB1-4 init sequence from the ACPI GPU0 panel config. */
-	dev_info(dev, "PNC357: vendor command group 1\n");
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETEXTC,
 				     0x83, 0x12, 0x1a, 0x55, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETBANK, 0x01);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xcb,
 				     0x1f, 0x55, 0x03, 0x28, 0x0d, 0x08, 0x0a);
 	mipi_dsi_msleep(&dsi_ctx, 120);
-	dev_info(dev, "PNC357: vendor command group 2\n");
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETBANK, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_UNKNOWN1,
 				     0x81, 0x00, 0x3d, 0x77, 0x18, 0x7a, 0x00);
-	dev_info(dev, "PNC357: exit sleep\n");
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 120);
-	dev_info(dev, "PNC357: set display params\n");
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, HX83121A_SETDISP,
 				     0x00, 0x6a, 0x40, 0x00, 0x00, 0x14,
 				     0x6e, 0x40, 0x73, 0x02, 0x80, 0x21,
@@ -105,8 +96,6 @@ static int hx83121a_on(struct hx83121a_panel *ctx)
 
 	if (dsi_ctx.accum_err)
 		goto err;
-
-	dev_info(dev, "PNC357: init sequence done\n");
 
 	return 0;
 
@@ -119,7 +108,6 @@ static int hx83121a_display_on(struct hx83121a_panel *ctx)
 {
 	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi };
 
-	dev_info(&ctx->dsi->dev, "PNC357: display on\n");
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 120);
 
@@ -162,21 +150,16 @@ static int hx83121a_prepare(struct drm_panel *panel)
 	struct drm_dsc_picture_parameter_set pps;
 	int ret;
 
-	dev_info(dev, "PNC357: prepare start\n");
-
 	ret = regulator_bulk_enable(ARRAY_SIZE(ctx->supplies), ctx->supplies);
 	if (ret < 0) {
 		dev_err(dev, "Failed to enable regulators: %d\n", ret);
 		return ret;
 	}
-	dev_info(dev, "PNC357: regulators enabled\n");
 
 	if (ctx->enable_gpio)
 		gpiod_set_value_cansleep(ctx->enable_gpio, 1);
-	dev_info(dev, "PNC357: enable gpio set\n");
 
 	hx83121a_reset(ctx);
-	dev_info(dev, "PNC357: reset done\n");
 
 	ret = hx83121a_on(ctx);
 	if (ret < 0) {
@@ -190,25 +173,17 @@ static int hx83121a_prepare(struct drm_panel *panel)
 
 	drm_dsc_pps_payload_pack(&pps, &ctx->dsc);
 
-	dev_info(dev, "PNC357: send PPS v%u.%u slice=%ux%u count=%u bpp=%u\n",
-		 ctx->dsc.dsc_version_major, ctx->dsc.dsc_version_minor,
-		 ctx->dsc.slice_width, ctx->dsc.slice_height,
-		 ctx->dsc.slice_count, ctx->dsc.bits_per_pixel);
-
 	ret = mipi_dsi_picture_parameter_set(ctx->dsi, &pps);
 	if (ret < 0) {
-		dev_err(panel->dev, "failed to transmit PPS on link1: %d\n", ret);
+		dev_err(panel->dev, "failed to transmit PPS: %d\n", ret);
 		return ret;
 	}
-	dev_info(dev, "PNC357: PPS sent\n");
 
-	dev_info(dev, "PNC357: enable compression\n");
 	ret = mipi_dsi_compression_mode(ctx->dsi, true);
 	if (ret < 0) {
 		dev_err(dev, "failed to enable compression mode: %d\n", ret);
 		return ret;
 	}
-	dev_info(dev, "PNC357: compression enabled\n");
 
 	ret = hx83121a_display_on(ctx);
 	if (ret < 0) {
@@ -217,7 +192,6 @@ static int hx83121a_prepare(struct drm_panel *panel)
 	}
 
 	msleep(50); /* TODO: Is this panel-dependent? */
-	dev_info(dev, "PNC357: prepare done\n");
 
 	return 0;
 }
@@ -235,18 +209,18 @@ static int hx83121a_unprepare(struct drm_panel *panel)
 }
 
 static const struct drm_display_mode hx83121a_mode = {
-    .clock = (1600 + 60 + 20 + 40) * (2560 + 48 + 4 + 82) * 60 / 1000, // EDID detailed timing
-    .hdisplay = 1600,
-    .hsync_start = 1600 + 60, // HorizontalActive + HorizontalFrontPorch
-    .hsync_end = 1600 + 60 + 20, // HorizontalActive + HorizontalFrontPorch + HorizontalSyncPulse
-    .htotal = 1600 + 60 + 20 + 40, // HorizontalActive + HorizontalFrontPorch + HorizontalSyncPulse + HorizontalBackPorch
-    .vdisplay = 2560,
-    .vsync_start = 2560 + 48, // VerticalActive + VerticalFrontPorch
-    .vsync_end = 2560 + 48 + 4, // VerticalActive + VerticalFrontPorch + VerticalSyncPulse
-    .vtotal = 2560 + 48 + 4 + 82, // VerticalActive + VerticalFrontPorch + VerticalSyncPulse + VerticalBackPorch
-    .width_mm = 265, // Converted from HorizontalScreenSizeMM (0x109) which is 265 in decimal
-    .height_mm = 166, // Converted from VerticalScreenSizeMM (0xA6) which is 166 in decimal
-    .type = DRM_MODE_TYPE_DRIVER,
+	.clock = 278020,
+	.hdisplay = 1600,
+	.hsync_start = 1660,
+	.hsync_end = 1680,
+	.htotal = 1720,
+	.vdisplay = 2560,
+	.vsync_start = 2608,
+	.vsync_end = 2612,
+	.vtotal = 2694,
+	.width_mm = 265,
+	.height_mm = 166,
+	.type = DRM_MODE_TYPE_DRIVER,
 };
 
 static int hx83121a_get_modes(struct drm_panel *panel,

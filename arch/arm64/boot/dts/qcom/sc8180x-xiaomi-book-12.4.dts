@@ -28,7 +28,7 @@
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
-        
+
         // From UEFI Memory Map
         // 0x80600000, 0x02400000, "Display Reserved",  AddMem, MEM_RES, SYS_MEM_CAP, Reserv, WRITE_THROUGH_XN
 		framebuffer0: framebuffer@80600000 {
@@ -579,6 +579,11 @@
 	pinctrl-0 = <&pcie2_default_state>;
 
 	status = "okay";
+
+	pcie@0 {
+		reset-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
+		phys = <&pcie2_phy>;
+	};
 };
 
 &pcie2_phy {
