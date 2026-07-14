@@ -685,7 +685,13 @@ void dpu_encoder_update_topology(struct drm_encoder *drm_enc,
 		 */
 		WARN(topology->num_intf > 2,
 		     "DSC topology cannot support more than 2 interfaces\n");
-		if (topology->num_intf >= 2 || dpu_kms->catalog->dsc_count >= 2)
+		/*
+		 * Experimental path for single-port panels that expose exactly
+		 * one DSC slice, such as CSOT PNC357DB1-4 on Xiaomi Book 12.4.
+		 */
+		if (topology->num_intf == 1 && dsc->slice_count == 1)
+			topology->num_dsc = 1;
+		else if (topology->num_intf >= 2 || dpu_kms->catalog->dsc_count >= 2)
 			topology->num_dsc = 2;
 		else
 			topology->num_dsc = 1;
