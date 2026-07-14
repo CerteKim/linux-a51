@@ -149,6 +149,11 @@ struct msm_dsi_host {
 	u32 err_work_state;
 	struct work_struct err_work;
 	struct workqueue_struct *workqueue;
+	u32 err_work_timeout_status;
+	u32 err_work_fifo_status;
+	u32 err_work_status0;
+	u32 err_work_dln0_phy_err;
+	u32 err_work_clk_status;
 
 	/* DSI 6G TX buffer*/
 	struct drm_gem_object *tx_gem_obj;
@@ -1533,12 +1538,22 @@ static void dsi_err_worker(struct work_struct *work)
 		container_of(work, struct msm_dsi_host, err_work);
 	u32 status = msm_host->err_work_state;
 
-	pr_err_ratelimited("%s: status=%x\n", __func__, status);
+	pr_err_ratelimited("%s: status=%x timeout=%08x fifo=%08x status0=%08x dln0=%08x clk=%08x\n",
+			   __func__, status, msm_host->err_work_timeout_status,
+			   msm_host->err_work_fifo_status,
+			   msm_host->err_work_status0,
+			   msm_host->err_work_dln0_phy_err,
+			   msm_host->err_work_clk_status);
 	if (status & DSI_ERR_STATE_MDP_FIFO_UNDERFLOW)
 		dsi_sw_reset(msm_host);
 
 	/* It is safe to clear here because error irq is disabled. */
 	msm_host->err_work_state = 0;
+	msm_host->err_work_timeout_status = 0;
+	msm_host->err_work_fifo_status = 0;
+	msm_host->err_work_status0 = 0;
+	msm_host->err_work_dln0_phy_err = 0;
+	msm_host->err_work_clk_status = 0;
 
 	/* enable dsi error interrupt */
 	dsi_intr_ctrl(msm_host, DSI_IRQ_MASK_ERROR, 1);
@@ -1566,6 +1581,7 @@ static void dsi_timeout_status(struct msm_dsi_host *msm_host)
 
 	if (status) {
 		dsi_write(msm_host, REG_DSI_TIMEOUT_STATUS, status);
+		msm_host->err_work_timeout_status |= status;
 		msm_host->err_work_state |= DSI_ERR_STATE_TIMEOUT;
 	}
 }
@@ -1582,6 +1598,7 @@ static void dsi_dln0_phy_err(struct msm_dsi_host *msm_host)
 			DSI_DLN0_PHY_ERR_DLN0_ERR_CONTENTION_LP0 |
 			DSI_DLN0_PHY_ERR_DLN0_ERR_CONTENTION_LP1)) {
 		dsi_write(msm_host, REG_DSI_DLN0_PHY_ERR, status);
+		msm_host->err_work_dln0_phy_err |= status;
 		msm_host->err_work_state |= DSI_ERR_STATE_DLN0_PHY;
 	}
 }
@@ -1595,6 +1612,7 @@ static void dsi_fifo_status(struct msm_dsi_host *msm_host)
 	/* fifo underflow, overflow */
 	if (status) {
 		dsi_write(msm_host, REG_DSI_FIFO_STATUS, status);
+		msm_host->err_work_fifo_status |= status;
 		msm_host->err_work_state |= DSI_ERR_STATE_FIFO;
 		if (status & DSI_FIFO_STATUS_CMD_MDP_FIFO_UNDERFLOW)
 			msm_host->err_work_state |=
@@ -1610,6 +1628,7 @@ static void dsi_status(struct msm_dsi_host *msm_host)
 
 	if (status & DSI_STATUS0_INTERLEAVE_OP_CONTENTION) {
 		dsi_write(msm_host, REG_DSI_STATUS0, status);
+		msm_host->err_work_status0 |= status;
 		msm_host->err_work_state |=
 			DSI_ERR_STATE_INTERLEAVE_OP_CONTENTION;
 	}
@@ -1623,6 +1642,7 @@ static void dsi_clk_status(struct msm_dsi_host *msm_host)
 
 	if (status & DSI_CLK_STATUS_PLL_UNLOCKED) {
 		dsi_write(msm_host, REG_DSI_CLK_STATUS, status);
+		msm_host->err_work_clk_status |= status;
 		msm_host->err_work_state |= DSI_ERR_STATE_PLL_UNLOCKED;
 	}
 }
