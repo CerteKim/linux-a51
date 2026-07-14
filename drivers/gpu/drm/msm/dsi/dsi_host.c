@@ -774,6 +774,9 @@ bool msm_dsi_host_is_wide_bus_enabled(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
+	if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO)
+		return false;
+
 	return msm_host->dsc &&
 		(msm_host->cfg_hnd->major == MSM_DSI_VER_MAJOR_6G &&
 		 msm_host->cfg_hnd->minor >= MSM_DSI_6G_VER_MINOR_V2_5_0);
