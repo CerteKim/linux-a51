@@ -651,6 +651,12 @@ static void dsi_calc_pclk(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 	msm_host->byte_clk_rate = dsi_byte_clk_get_rate(&msm_host->base, is_bonded_dsi,
 							msm_host->mode);
 
+	dev_info(&msm_host->pdev->dev,
+		 "PNC357 DSI clocks: pclk=%lu byteclk=%lu lanes=%u flags=%lx dsc=%u bonded=%u\n",
+		 msm_host->pixel_clk_rate, msm_host->byte_clk_rate,
+		 msm_host->lanes, msm_host->mode_flags, !!msm_host->dsc,
+		 is_bonded_dsi);
+
 	DBG("pclk=%lu, bclk=%lu", msm_host->pixel_clk_rate,
 				msm_host->byte_clk_rate);
 }
@@ -947,6 +953,11 @@ static void dsi_update_dsc_timing(struct msm_dsi_host *msm_host, bool is_cmd_mod
 	reg |= DSI_VIDEO_COMPRESSION_MODE_CTRL_EOL_BYTE_NUM(eol_byte_num);
 	reg |= DSI_VIDEO_COMPRESSION_MODE_CTRL_EN;
 
+	dev_info(&msm_host->pdev->dev,
+		 "PNC357 DSI DSC: cmd=%u slice_count=%u slice_chunk=%u pkt_per_line=%u eol=%u bytes_per_pkt=%u reg=%08x\n",
+		 is_cmd_mode, dsc->slice_count, dsc->slice_chunk_size,
+		 pkt_per_line, eol_byte_num, bytes_per_pkt, reg);
+
 	if (is_cmd_mode) {
 		reg_ctrl = dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL);
 		reg_ctrl2 = dsi_read(msm_host, REG_DSI_COMMAND_COMPRESSION_MODE_CTRL2);
@@ -978,6 +989,8 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 	u32 va_start = v_total - mode->vsync_start;
 	u32 va_end = va_start + mode->vdisplay;
 	u32 hdisplay = mode->hdisplay;
+	u32 bytes_per_line = 0;
+	u32 bytes_per_pclk = 0;
 	u32 wc;
 	int ret;
 	bool wide_bus_enabled = msm_dsi_host_is_wide_bus_enabled(&msm_host->base);
@@ -1001,7 +1014,6 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 
 	if (msm_host->dsc) {
 		struct drm_dsc_config *dsc = msm_host->dsc;
-		u32 bytes_per_pclk;
 
 		/* update dsc params with timing params */
 		if (!dsc || !mode->hdisplay || !mode->vdisplay) {
@@ -1040,11 +1052,21 @@ static void dsi_timing_setup(struct msm_dsi_host *msm_host, bool is_bonded_dsi)
 		else
 			bytes_per_pclk = 3;
 
-		hdisplay = DIV_ROUND_UP(msm_dsc_get_bytes_per_line(msm_host->dsc), bytes_per_pclk);
+		bytes_per_line = msm_dsc_get_bytes_per_line(msm_host->dsc);
+		hdisplay = DIV_ROUND_UP(bytes_per_line, bytes_per_pclk);
 
 		h_total += hdisplay;
 		ha_end = ha_start + hdisplay;
 	}
+
+	dev_info(&msm_host->pdev->dev,
+		 "PNC357 DSI timing: flags=%lx wide=%u mode=%ux%u clock=%u h=%u/%u/%u/%u v=%u/%u/%u/%u dsc_line_bytes=%u bytes_per_pclk=%u active_h=%u-%u total_h=%u\n",
+		 msm_host->mode_flags, wide_bus_enabled,
+		 mode->hdisplay, mode->vdisplay, mode->clock,
+		 mode->hdisplay, mode->hsync_start, mode->hsync_end,
+		 mode->htotal, mode->vdisplay, mode->vsync_start,
+		 mode->vsync_end, mode->vtotal, bytes_per_line,
+		 bytes_per_pclk, ha_start, ha_end, h_total);
 
 	if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO) {
 		if (msm_host->dsc)
