@@ -500,9 +500,6 @@
 &i2c2 {
 	clock-frequency = <400000>;
 
-	pinctrl-0 = <&i2c2_active>;
-	pinctrl-names = "default";
-
 	status = "okay";
 
 	// Based on DSDT
@@ -955,7 +952,7 @@
 };
 
 &tlmm {
-	gpio-reserved-ranges = <0 4>, <47 4>, <128 2>;
+	gpio-reserved-ranges = <0 4>, <47 4>, <126 4>;
 
 	hall_int_active_state: hall-int-active-state {
 		pins = "gpio121";
