@@ -12,6 +12,9 @@
 #include <dt-bindings/input/gpio-keys.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/soc/qcom,apr.h>
+#include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
 #include "sc8180x.dtsi"
 #include "sc8180x-pmics.dtsi"
 
@@ -21,6 +24,35 @@
 
 	aliases {
 		serial0 = &uart13;
+	};
+
+	sound {
+		compatible = "qcom,sdm845-sndcard";
+		model = "Xiaomi-Book-12.4";
+
+		mm1-dai-link {
+			link-name = "MultiMedia1";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+			};
+		};
+
+		mm2-dai-link {
+			link-name = "MultiMedia2";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+			};
+		};
+
+		mm3-dai-link {
+			link-name = "MultiMedia3";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+			};
+		};
 	};
 
 /*
@@ -473,13 +505,14 @@
 
 	status = "okay";
 
-    // Based on DSDT
-    // Device (TSC1), Method _CRS
+	// Based on DSDT
+	// Device (TSC1), Method _CRS
 	// Name (LPXC, Package (0x01)
-	touchscreen@4f {
+	hid@4f {
 		compatible = "hid-over-i2c";
 		reg = <0x4f>;
 		hid-descr-addr = <0x1>;
+		panel = <&display_panel>;
 
 		vdd-supply = <&vreg_l4c_3p3>;
 		vddl-supply = <&vreg_l12e_1p8>;
@@ -552,7 +585,7 @@
 	vdda-supply = <&vreg_l3c_1p2>;
 	refgen-supply = <&refgen>;
 
-	panel@0 {
+	display_panel: panel@0 {
 		compatible = "csot,pnc357db1-4";
 		reg = <0>;
 		vddi-supply = <&vreg_l12a_1p8>;
@@ -664,6 +697,76 @@
 	status = "okay";
 };
 
+&remoteproc_adsp_glink {
+	apr {
+		compatible = "qcom,apr-v2";
+		qcom,glink-channels = "apr_audio_svc";
+		qcom,domain = <APR_DOMAIN_ADSP>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		qcom,intents = <512 20>;
+
+		service@3 {
+			compatible = "qcom,q6core";
+			reg = <APR_SVC_ADSP_CORE>;
+			qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
+		};
+
+		q6afe: service@4 {
+			compatible = "qcom,q6afe";
+			reg = <APR_SVC_AFE>;
+			qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
+
+			q6afedai: dais {
+				compatible = "qcom,q6afe-dais";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				#sound-dai-cells = <1>;
+			};
+		};
+
+		q6asm: service@7 {
+			compatible = "qcom,q6asm";
+			reg = <APR_SVC_ASM>;
+			qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
+
+			q6asmdai: dais {
+				compatible = "qcom,q6asm-dais";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				#sound-dai-cells = <1>;
+				iommus = <&apps_smmu 0x1b21 0x0>;
+
+				dai@0 {
+					reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+					direction = <Q6ASM_DAI_RX>;
+				};
+
+				dai@1 {
+					reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
+					direction = <Q6ASM_DAI_TX>;
+				};
+
+				dai@2 {
+					reg = <MSM_FRONTEND_DAI_MULTIMEDIA3>;
+					direction = <Q6ASM_DAI_RX>;
+				};
+			};
+		};
+
+		q6adm: service@8 {
+			compatible = "qcom,q6adm";
+			reg = <APR_SVC_ADM>;
+			qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
+
+			q6routing: routing {
+				compatible = "qcom,q6adm-routing";
+				#sound-dai-cells = <0>;
+			};
+		};
+	};
+};
+
 &remoteproc_cdsp {
 	memory-region = <&cdsp_mem>;
 	firmware-name = "qcom/XIAOMI/BOOK124/qccdsp8180.mbn";
@@ -676,6 +779,33 @@
 	firmware-name = "qcom/XIAOMI/BOOK124/qcmpss8180_nm.mbn";
 
 	status = "okay";
+};
+
+&soc {
+	slimbam: dma-controller@17184000 {
+		compatible = "qcom,bam-v1.7.4", "qcom,bam-v1.7.0";
+		qcom,controlled-remotely;
+		reg = <0x0 0x17184000 0x0 0x32000>;
+		num-channels = <23>;
+		interrupts = <GIC_SPI 164 IRQ_TYPE_LEVEL_HIGH>;
+		#dma-cells = <1>;
+		qcom,ee = <1>;
+		qcom,num-ees = <4>;
+		iommus = <&apps_smmu 0x1b46 0x0>;
+	};
+
+	slim: slim-ngd@171c0000 {
+		compatible = "qcom,slim-ngd-v2.1.0";
+		reg = <0x0 0x171c0000 0x0 0x2c000>;
+		interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>;
+		dmas = <&slimbam 3>, <&slimbam 4>;
+		dma-names = "rx", "tx";
+		iommus = <&apps_smmu 0x1b46 0x0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		status = "okay";
+	};
 };
 
 &sdhc_2 {
