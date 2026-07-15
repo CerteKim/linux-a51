@@ -221,6 +221,18 @@
 		vin-supply = <&vreg_l3c_1p2>;
 	};
 
+	vreg_nvme_3p3: regulator-nvme-3p3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vreg_nvme_3p3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+
+		gpio = <&pmc8180c_gpios 11 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+
+		regulator-boot-on;
+	};
+
 	usbprim-sbu-mux {
 		compatible = "pericom,pi3usb102", "gpio-sbu-mux";
 
@@ -304,6 +316,7 @@
 
 		vdd-s6-supply = <&vph_pwr>;
 		vdd-l2-l3-supply = <&vreg_s6c_1p35>;
+		vdd-l4-l5-l6-supply = <&vreg_bob>;
 		vdd-bob-supply = <&vph_pwr>;
 
 		vreg_s6c_1p35: smps6 {
@@ -328,6 +341,15 @@
 			regulator-min-microvolt = <3008000>;
 			regulator-max-microvolt = <3008000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l6c_1p8_2p95: ldo6 {
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <2950000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+						   RPMH_REGULATOR_MODE_HPM>;
+			regulator-allow-set-load;
 		};
 
 		vreg_l10c_3p3: ldo10 {
@@ -421,6 +443,15 @@
 			regulator-min-microvolt = <3072000>;
 			regulator-max-microvolt = <3072000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
+		vreg_l17e_2p96: ldo17 {
+			regulator-min-microvolt = <2960000>;
+			regulator-max-microvolt = <2960000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+			regulator-allowed-modes = <RPMH_REGULATOR_MODE_LPM
+						   RPMH_REGULATOR_MODE_HPM>;
+			regulator-allow-set-load;
 		};
 	};
 };
@@ -567,11 +598,28 @@
 
 // FIXME: Unknown Pin for PCIE2
 &pcie2 {
+	interrupts = <GIC_SPI 672 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 671 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 670 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 669 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 668 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 667 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 666 IRQ_TYPE_LEVEL_HIGH>,
+		     <GIC_SPI 665 IRQ_TYPE_LEVEL_HIGH>;
+	interrupt-names = "msi0",
+			  "msi1",
+			  "msi2",
+			  "msi3",
+			  "msi4",
+			  "msi5",
+			  "msi6",
+			  "msi7";
+
 	perst-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
 
 	//wake-gpios = <&tlmm 104 GPIO_ACTIVE_HIGH>;
 
-	//vddpe-3v3-supply = <&vreg_nvme_3p3>;
+	vddpe-3v3-supply = <&vreg_nvme_3p3>;
 
 	num-lanes = <2>;
 
@@ -626,6 +674,19 @@
 &remoteproc_mpss {
 	memory-region = <&mpss_mem>;
 	firmware-name = "qcom/XIAOMI/BOOK124/qcmpss8180_nm.mbn";
+
+	status = "okay";
+};
+
+&sdhc_2 {
+	cd-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
+	pinctrl-0 = <&sdc2_default_state>, <&sdc2_card_det_state>;
+	pinctrl-1 = <&sdc2_sleep_state>, <&sdc2_card_det_state>;
+	pinctrl-names = "default", "sleep";
+	vmmc-supply = <&vreg_l17e_2p96>;
+	vqmmc-supply = <&vreg_l6c_1p8_2p95>;
+	no-mmc;
+	no-sdio;
 
 	status = "okay";
 };
@@ -845,6 +906,54 @@
 			drive-strength = <2>;
 			bias-pull-up;
 		};
+	};
+
+	sdc2_default_state: sdc2-default-state {
+		clk-pins {
+			pins = "sdc2_clk";
+			drive-strength = <16>;
+			bias-disable;
+		};
+
+		cmd-pins {
+			pins = "sdc2_cmd";
+			drive-strength = <16>;
+			bias-pull-up;
+		};
+
+		data-pins {
+			pins = "sdc2_data";
+			drive-strength = <16>;
+			bias-pull-up;
+		};
+	};
+
+	sdc2_sleep_state: sdc2-sleep-state {
+		clk-pins {
+			pins = "sdc2_clk";
+			drive-strength = <2>;
+			bias-disable;
+		};
+
+		cmd-pins {
+			pins = "sdc2_cmd";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+
+		data-pins {
+			pins = "sdc2_data";
+			drive-strength = <2>;
+			bias-pull-up;
+		};
+	};
+
+	sdc2_card_det_state: sdc2-card-det-state {
+		pins = "gpio96";
+		function = "gpio";
+
+		drive-strength = <2>;
+		bias-pull-up;
 	};
 
 	ts_active_state: ts-active-state {
