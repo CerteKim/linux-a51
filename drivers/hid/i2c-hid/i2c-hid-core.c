@@ -185,19 +185,9 @@ static int i2c_hid_probe_address(struct i2c_hid *ihid)
 	 */
 	ret = i2c_smbus_read_byte(ihid->client);
 	if (ret < 0) {
-		dev_info(&ihid->client->dev,
-			 "PNC357 i2c-hid: address probe first read failed: %d\n",
-			 ret);
 		usleep_range(400, 500);
 		ret = i2c_smbus_read_byte(ihid->client);
 	}
-	if (ret < 0)
-		dev_warn(&ihid->client->dev,
-			 "PNC357 i2c-hid: address probe failed: %d\n", ret);
-	else
-		dev_info(&ihid->client->dev,
-			 "PNC357 i2c-hid: address probe ok: %d\n", ret);
-
 	return ret < 0 ? ret : 0;
 }
 
@@ -1052,15 +1042,9 @@ static int __i2c_hid_core_probe(struct i2c_hid *ihid)
 	struct hid_device *hid = ihid->hid;
 	int ret;
 
-	dev_info(&client->dev,
-		 "PNC357 i2c-hid: core probe start addr=0x%02x desc=0x%04x irq=%d panel_follower=%d\n",
-		 client->addr, le16_to_cpu(ihid->wHIDDescRegister),
-		 client->irq, ihid->is_panel_follower);
-
 	ret = i2c_hid_probe_address(ihid);
 	if (ret < 0) {
-		dev_warn(&client->dev,
-			 "PNC357 i2c-hid: nothing at this address: %d\n", ret);
+		i2c_hid_dbg(ihid, "nothing at this address: %d\n", ret);
 		return -ENXIO;
 	}
 
@@ -1070,12 +1054,6 @@ static int __i2c_hid_core_probe(struct i2c_hid *ihid)
 			"Failed to fetch the HID Descriptor\n");
 		return ret;
 	}
-
-	dev_info(&client->dev,
-		 "PNC357 i2c-hid: HID descriptor ok version=0x%04x vendor=0x%04x product=0x%04x\n",
-		 le16_to_cpu(ihid->hdesc.bcdVersion),
-		 le16_to_cpu(ihid->hdesc.wVendorID),
-		 le16_to_cpu(ihid->hdesc.wProductID));
 
 	hid->version = le16_to_cpu(ihid->hdesc.bcdVersion);
 	hid->vendor = le16_to_cpu(ihid->hdesc.wVendorID);
@@ -1101,19 +1079,13 @@ static int i2c_hid_core_register_hid(struct i2c_hid *ihid)
 
 	enable_irq(client->irq);
 
-	dev_info(&client->dev, "PNC357 i2c-hid: hid_add_device start\n");
-
 	ret = hid_add_device(hid);
 	if (ret) {
-		dev_warn(&client->dev,
-			 "PNC357 i2c-hid: hid_add_device failed: %d\n", ret);
 		if (ret != -ENODEV)
 			hid_err(client, "can't add hid device: %d\n", ret);
 		disable_irq(client->irq);
 		return ret;
 	}
-
-	dev_info(&client->dev, "PNC357 i2c-hid: hid_add_device ok\n");
 
 	/* At least some QTEC devices need this after initialization */
 	if (ihid->quirks & I2C_HID_QUIRK_RE_POWER_ON)
@@ -1310,28 +1282,17 @@ int i2c_hid_core_probe(struct i2c_client *client, struct i2chid_ops *ops,
 	/* Power on and probe unless device is a panel follower. */
 	if (!ihid->is_panel_follower) {
 		ret = i2c_hid_core_power_up(ihid);
-		if (ret < 0) {
-			dev_warn(&client->dev,
-				 "PNC357 i2c-hid: power up failed: %d\n", ret);
+		if (ret < 0)
 			goto err_destroy_device;
-		}
-		dev_info(&client->dev, "PNC357 i2c-hid: power up ok\n");
 
 		ret = __i2c_hid_core_probe(ihid);
-		if (ret < 0) {
-			dev_warn(&client->dev,
-				 "PNC357 i2c-hid: core probe failed: %d\n", ret);
+		if (ret < 0)
 			goto err_power_down;
-		}
 	}
 
 	ret = i2c_hid_init_irq(client);
-	if (ret < 0) {
-		dev_warn(&client->dev,
-			 "PNC357 i2c-hid: init irq failed: %d\n", ret);
+	if (ret < 0)
 		goto err_power_down;
-	}
-	dev_info(&client->dev, "PNC357 i2c-hid: init irq ok\n");
 
 	/*
 	 * If we're a panel follower, we'll register when the panel turns on;
@@ -1341,13 +1302,8 @@ int i2c_hid_core_probe(struct i2c_client *client, struct i2chid_ops *ops,
 		ret = i2c_hid_core_register_panel_follower(ihid);
 	else
 		ret = i2c_hid_core_register_hid(ihid);
-	if (ret) {
-		dev_warn(&client->dev,
-			 "PNC357 i2c-hid: register failed: %d\n", ret);
+	if (ret)
 		goto err_free_irq;
-	}
-
-	dev_info(&client->dev, "PNC357 i2c-hid: probe complete\n");
 
 	return 0;
 
