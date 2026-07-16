@@ -39,9 +39,13 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 	struct gpio_desc *mbhc_gpio;
 
 	dev_info(dev,
-		 "probe on SPI bus=%d cs=%u mode=0x%x bits_per_word=%u max_speed=%u irq=%d\n",
+		 "probe on SPI bus=%d cs=%u mode=0x%x bits_per_word=%u max_speed=%u irq=%d node=%pOF\n",
 		 spi->controller->bus_num, spi_get_chipselect(spi, 0),
-		 spi->mode, spi->bits_per_word, spi->max_speed_hz, spi->irq);
+		 spi->mode, spi->bits_per_word, spi->max_speed_hz, spi->irq,
+		 dev->of_node);
+
+	if (!spi->irq)
+		dev_info(dev, "no IRQ mapped; Windows AUDD GpioInt 0x0100 remains unresolved\n");
 
 	audd_gpio = devm_gpiod_get_optional(dev, "audd", GPIOD_ASIS);
 	if (IS_ERR(audd_gpio))
@@ -66,8 +70,15 @@ static const struct of_device_id xiaomi_audd_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, xiaomi_audd_of_match);
 
+static const struct spi_device_id xiaomi_audd_spi_ids[] = {
+	{ "sc8180x-xiaomi-audd" },
+	{ }
+};
+MODULE_DEVICE_TABLE(spi, xiaomi_audd_spi_ids);
+
 static struct spi_driver xiaomi_audd_driver = {
 	.probe = xiaomi_audd_probe,
+	.id_table = xiaomi_audd_spi_ids,
 	.driver = {
 		.name = "qcom-xiaomi-audd",
 		.of_match_table = xiaomi_audd_of_match,
