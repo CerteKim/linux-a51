@@ -482,9 +482,14 @@
 		reg = <0x4f>;
 
 		hid-descr-addr = <0x1>;
+		vdd-supply = <&vreg_l4c_3p3>;
+		vddl-supply = <&vreg_l12e_1p8>;
+		post-power-on-delay-ms = <200>;
+		reset-gpios = <&tlmm 54 GPIO_ACTIVE_LOW>;
+
 		interrupts-extended = <&tlmm 122 IRQ_TYPE_LEVEL_LOW>;
 
-		pinctrl-0 = <&ts_irq_active>;
+		pinctrl-0 = <&ts_active_state>;
 		pinctrl-names = "default";
 	};
 };
