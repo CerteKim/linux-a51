@@ -13,7 +13,6 @@
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/soc/qcom,apr.h>
-#include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include "sc8180x.dtsi"
 #include "sc8180x-pmics.dtsi"
@@ -29,10 +28,6 @@
 	sound: sound {
 		compatible = "qcom,sdm845-sndcard";
 		model = "Xiaomi Book 12.4";
-
-		audio-routing =
-			"RX_BIAS", "MCLK",
-			"AMIC2", "MIC BIAS2";
 
 		mm1-dai-link {
 			link-name = "MultiMedia1";
@@ -55,38 +50,6 @@
 
 			cpu {
 				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
-			};
-		};
-
-		slim-dai-link {
-			link-name = "SLIM Playback";
-
-			cpu {
-				sound-dai = <&q6afedai SLIMBUS_0_RX>;
-			};
-
-			platform {
-				sound-dai = <&q6routing>;
-			};
-
-			codec {
-				sound-dai = <&wcd9340 0>;
-			};
-		};
-
-		slimcap-dai-link {
-			link-name = "SLIM Capture";
-
-			cpu {
-				sound-dai = <&q6afedai SLIMBUS_0_TX>;
-			};
-
-			platform {
-				sound-dai = <&q6routing>;
-			};
-
-			codec {
-				sound-dai = <&wcd9340 1>;
 			};
 		};
 	};
@@ -597,6 +560,18 @@
  * Windows exposes this bus as \_SB.SPI4, but its MMIO base is 0x0088c000,
  * which maps to Linux's &spi3 / QUP0 SE3. The AUDD audio device is attached
  * to chip select 0 on this bus.
+ *
+ * Windows DSDT resources for \_SB.ADSP.SLM1.ADCM.AUDD:
+ * - GpioIo  \_SB.GIO0 pin 0x008f (143), initial value 0 in qcauddev8180.inf
+ * - GpioInt \_SB.GIO0 pin 0x0100, Edge/ActiveHigh/PullDown
+ * - SPI4 CS0, 8-bit, mode 0, 24 MHz
+ * - child devices AUDD\QCOM0437 (MBHC) and AUDD\QCOM042C (audio adapter)
+ *
+ * MBHC has a separate GpioIo \_SB.GIO0 pin 0x0038 (56), PullUp/OutputOnly.
+ *
+ * Do not model this as the SDM845-style WCD9340 SLIMbus codec yet: the
+ * Windows resources expose an SPI/WDSP-backed AUDD device and do not confirm
+ * WCD9340 GPIO54 IRQ or GPIO64 reset wiring on this machine.
  */
 &spi3 {
 	pinctrl-0 = <&spi3_active>;
@@ -856,74 +831,6 @@
 			reg = <1>;
 			#address-cells = <2>;
 			#size-cells = <0>;
-
-			wcd9340_ifd: ifd@0,0 {
-				compatible = "slim217,250";
-				reg = <0 0>;
-			};
-
-			wcd9340: codec@1,0 {
-				compatible = "slim217,250";
-				reg = <1 0>;
-				slim-ifc-dev = <&wcd9340_ifd>;
-
-				#sound-dai-cells = <1>;
-
-				interrupts-extended = <&tlmm 54 IRQ_TYPE_LEVEL_HIGH>;
-				interrupt-controller;
-				#interrupt-cells = <1>;
-
-				reset-gpios = <&tlmm 64 GPIO_ACTIVE_HIGH>;
-
-				clock-names = "extclk";
-				clocks = <&rpmhcc RPMH_LN_BB_CLK2>;
-
-				#clock-cells = <0>;
-				clock-frequency = <9600000>;
-				clock-output-names = "mclk";
-
-				vdd-buck-supply = <&vreg_s4a_1p8>;
-				vdd-buck-sido-supply = <&vreg_s4a_1p8>;
-				vdd-tx-supply = <&vreg_s4a_1p8>;
-				vdd-rx-supply = <&vreg_s4a_1p8>;
-				vdd-io-supply = <&vreg_s4a_1p8>;
-
-				pinctrl-0 = <&wcd_intr_default>;
-				pinctrl-names = "default";
-
-				qcom,micbias1-microvolt = <1800000>;
-				qcom,micbias2-microvolt = <1800000>;
-				qcom,micbias3-microvolt = <1800000>;
-				qcom,micbias4-microvolt = <1800000>;
-
-				#address-cells = <1>;
-				#size-cells = <1>;
-
-				wcdgpio: gpio-controller@42 {
-					compatible = "qcom,wcd9340-gpio";
-					gpio-controller;
-					#gpio-cells = <2>;
-					reg = <0x42 0x2>;
-				};
-
-				swm: soundwire@c85 {
-					compatible = "qcom,soundwire-v1.3.0";
-					reg = <0xc85 0x40>;
-					interrupts-extended = <&wcd9340 20>;
-
-					qcom,dout-ports = <6>;
-					qcom,din-ports = <2>;
-					qcom,ports-sinterval-low = /bits/ 8 <0x07 0x1f 0x3f 0x07 0x1f 0x3f 0x0f 0x0f>;
-					qcom,ports-offset1 = /bits/ 8 <0x01 0x02 0x0c 0x06 0x12 0x0d 0x07 0x0a>;
-					qcom,ports-offset2 = /bits/ 8 <0x00 0x00 0x1f 0x00 0x00 0x1f 0x00 0x00>;
-
-					#sound-dai-cells = <1>;
-					clocks = <&wcd9340>;
-					clock-names = "iface";
-					#address-cells = <2>;
-					#size-cells = <0>;
-				};
-			};
 		};
 	};
 };
@@ -1107,11 +1014,19 @@
 		bias-pull-up;
 	};
 
-	wcd_intr_default: wcd-intr-default-state {
-		pins = "gpio54";
+	audd_gpio_state: audd-gpio-state {
+		pins = "gpio143";
 		function = "gpio";
 
-		bias-pull-down;
+		bias-disable;
+		drive-strength = <2>;
+	};
+
+	audd_mbhc_gpio_state: audd-mbhc-gpio-state {
+		pins = "gpio56";
+		function = "gpio";
+
+		bias-pull-up;
 		drive-strength = <2>;
 	};
 
