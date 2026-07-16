@@ -527,6 +527,18 @@
     */
 };
 
+/*
+ * Windows exposes this bus as \_SB.SPI4, but its MMIO base is 0x0088c000,
+ * which maps to Linux's &spi3 / QUP0 SE3. The AUDD audio device is attached
+ * to chip select 0 on this bus.
+ */
+&spi3 {
+	pinctrl-0 = <&spi3_active>;
+	pinctrl-names = "default";
+
+	status = "okay";
+};
+
 // From PNC357DB1.xml
 // FIXME: Due to PEP0 defination, device is using PMIC-WLED
 // 		  backlight, need to confirm the configuration.
@@ -967,6 +979,14 @@
 
 		bias-pull-up;
 		drive-strength = <2>;
+	};
+
+	spi3_active: spi3-active-state {
+		pins = "gpio144", "gpio145", "gpio146", "gpio147";
+		function = "qup3";
+
+		bias-disable;
+		drive-strength = <6>;
 	};
 
 	pcie2_default_state: pcie2-default-state {
