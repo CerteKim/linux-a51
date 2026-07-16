@@ -465,30 +465,31 @@
 	};
 };
 
-&i2c2 {
+/*
+ * Windows exposes the touchscreen bus as \_SB.I2C2, but its MMIO base is
+ * 0x00884000, which maps to Linux's &i2c1 / QUP0 SE1.
+ */
+&i2c1 {
 	clock-frequency = <400000>;
 
-	pinctrl-0 = <&i2c2_active>;
+	pinctrl-0 = <&i2c1_active>;
 	pinctrl-names = "default";
 
 	status = "okay";
 
-    // Based on DSDT
-    // Device (TSC1), Method _CRS
-	// Name (LPXC, Package (0x01)
 	touchscreen@4f {
 		compatible = "hid-over-i2c";
 		reg = <0x4f>;
-		hid-descr-addr = <0x1>;
 
+		hid-descr-addr = <0x1>;
 		vdd-supply = <&vreg_l4c_3p3>;
 		vddl-supply = <&vreg_l12e_1p8>;
 		post-power-on-delay-ms = <200>;
 
 		interrupts-extended = <&tlmm 122 IRQ_TYPE_LEVEL_LOW>;
 
+		pinctrl-0 = <&ts_irq_active>;
 		pinctrl-names = "default";
-		pinctrl-0 = <&ts_active_state>;
 	};
 };
 
@@ -850,6 +851,13 @@
 		drive-strength = <2>;
 	};
 
+	ts_irq_active: ts-irq-active-state {
+		pins = "gpio122";
+		function = "gpio";
+
+		bias-pull-up;
+	};
+
 	i2c7_active: i2c7-active-state {
 		pins = "gpio98", "gpio99";
 		function = "qup7";
@@ -954,24 +962,6 @@
 
 		drive-strength = <2>;
 		bias-pull-up;
-	};
-
-	ts_active_state: ts-active-state {
-		int-n-pins {
-			pins = "gpio122";
-			function = "gpio";
-
-			bias-pull-up;
-			drive-strength = <2>;
-		};
-
-		reset-n-pins {
-			pins = "gpio54";
-			function = "gpio";
-
-			bias-pull-up;
-			drive-strength = <2>;
-		};
 	};
 
 	usbprim_sbu_default: usbprim-sbu-state {
