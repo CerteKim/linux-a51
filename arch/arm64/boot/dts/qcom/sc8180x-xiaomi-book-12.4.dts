@@ -476,6 +476,17 @@
 	pinctrl-names = "default";
 
 	status = "okay";
+
+	touchscreen@4f {
+		compatible = "hid-over-i2c";
+		reg = <0x4f>;
+
+		hid-descr-addr = <0x1>;
+		interrupts-extended = <&tlmm 122 IRQ_TYPE_LEVEL_LOW>;
+
+		pinctrl-0 = <&ts_irq_active>;
+		pinctrl-names = "default";
+	};
 };
 
 &i2c7 {
@@ -834,6 +845,13 @@
 
 		bias-pull-up;
 		drive-strength = <2>;
+	};
+
+	ts_irq_active: ts-irq-active-state {
+		pins = "gpio122";
+		function = "gpio";
+
+		bias-pull-up;
 	};
 
 	i2c7_active: i2c7-active-state {
