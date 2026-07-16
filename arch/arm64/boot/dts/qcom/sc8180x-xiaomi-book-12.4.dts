@@ -485,11 +485,10 @@
 		vdd-supply = <&vreg_l4c_3p3>;
 		vddl-supply = <&vreg_l12e_1p8>;
 		post-power-on-delay-ms = <200>;
-		reset-gpios = <&tlmm 54 GPIO_ACTIVE_LOW>;
 
 		interrupts-extended = <&tlmm 122 IRQ_TYPE_LEVEL_LOW>;
 
-		pinctrl-0 = <&ts_active_state>;
+		pinctrl-0 = <&ts_irq_active>;
 		pinctrl-names = "default";
 	};
 };
@@ -963,24 +962,6 @@
 
 		drive-strength = <2>;
 		bias-pull-up;
-	};
-
-	ts_active_state: ts-active-state {
-		int-n-pins {
-			pins = "gpio122";
-			function = "gpio";
-
-			bias-pull-up;
-			drive-strength = <2>;
-		};
-
-		reset-n-pins {
-			pins = "gpio54";
-			function = "gpio";
-
-			bias-pull-up;
-			drive-strength = <2>;
-		};
 	};
 
 	usbprim_sbu_default: usbprim-sbu-state {
