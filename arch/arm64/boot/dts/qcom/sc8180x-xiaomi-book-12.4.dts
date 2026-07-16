@@ -751,6 +751,37 @@
 	status = "okay";
 };
 
+&soc {
+	slimbam: dma-controller@17184000 {
+		compatible = "qcom,bam-v1.7.4", "qcom,bam-v1.7.0";
+		reg = <0x0 0x17184000 0x0 0x2a000>;
+		interrupts = <GIC_SPI 164 IRQ_TYPE_LEVEL_HIGH>;
+		#dma-cells = <1>;
+		qcom,controlled-remotely;
+		qcom,ee = <1>;
+		qcom,num-ees = <4>;
+		num-channels = <23>;
+		iommus = <&apps_smmu 0x1b46 0x0>;
+	};
+
+	slim: slim-ngd@171c0000 {
+		compatible = "qcom,slim-ngd-v2.1.0";
+		reg = <0x0 0x171c0000 0x0 0x2c000>;
+		interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>;
+		dmas = <&slimbam 3>, <&slimbam 4>;
+		dma-names = "rx", "tx";
+		iommus = <&apps_smmu 0x1b46 0x0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		slim@1 {
+			reg = <1>;
+			#address-cells = <2>;
+			#size-cells = <0>;
+		};
+	};
+};
+
 &sdhc_2 {
 	cd-gpios = <&tlmm 96 GPIO_ACTIVE_HIGH>;
 	pinctrl-0 = <&sdc2_default_state>, <&sdc2_card_det_state>;
