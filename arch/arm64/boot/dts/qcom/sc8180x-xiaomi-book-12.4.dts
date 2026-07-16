@@ -578,6 +578,15 @@
 	pinctrl-names = "default";
 
 	status = "okay";
+
+	audd@0 {
+		compatible = "qcom,sc8180x-xiaomi-audd";
+		reg = <0>;
+		spi-max-frequency = <24000000>;
+
+		audd-gpios = <&tlmm 143 GPIO_ACTIVE_HIGH>;
+		mbhc-gpios = <&tlmm 56 GPIO_ACTIVE_HIGH>;
+	};
 };
 
 // From PNC357DB1.xml
