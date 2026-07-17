@@ -15,6 +15,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_platform.h>
 #include <linux/spi/spi.h>
 
 static void xiaomi_audd_log_gpio(struct device *dev, const char *name,
@@ -39,6 +40,9 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 	struct device *dev = &spi->dev;
 	struct gpio_desc *audd_gpio;
 	struct gpio_desc *mbhc_gpio;
+	struct device_node *child;
+	unsigned int child_count = 0;
+	int ret;
 
 	dev_info(dev,
 		 "probe on SPI bus=%d cs=%u mode=0x%x bits_per_word=%u max_speed=%u irq=%d node=%pOF\n",
@@ -62,7 +66,33 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 
 	xiaomi_audd_log_gpio(dev, "audd", audd_gpio);
 	xiaomi_audd_log_gpio(dev, "mbhc", mbhc_gpio);
-	dev_info(dev, "diagnostic probe complete, no SPI transfer was issued\n");
+
+	for_each_available_child_of_node(dev->of_node, child) {
+		const char *hid = NULL;
+		const char *compat = NULL;
+		u32 reg;
+
+		of_property_read_string(child, "compatible", &compat);
+		of_property_read_string(child, "qcom,windows-hid", &hid);
+
+		if (!of_property_read_u32(child, "reg", &reg))
+			dev_info(dev, "child[%u] reg=%u compatible=%s windows-hid=%s\n",
+				 child_count, reg, compat ?: "(none)", hid ?: "(none)");
+		else
+			dev_info(dev, "child[%u] compatible=%s windows-hid=%s\n",
+				 child_count, compat ?: "(none)", hid ?: "(none)");
+
+		child_count++;
+	}
+
+	ret = devm_of_platform_populate(dev);
+	if (ret)
+		return dev_err_probe(dev, ret,
+				     "failed to populate passive AUDD child devices\n");
+
+	dev_info(dev,
+		 "diagnostic probe complete, enumerated %u child device(s), no SPI transfer was issued\n",
+		 child_count);
 
 	return 0;
 }

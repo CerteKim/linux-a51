@@ -588,8 +588,35 @@
 		reg = <0>;
 		spi-max-frequency = <24000000>;
 
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		pinctrl-0 = <&audd_gpio_state>, <&audd_mbhc_gpio_state>;
+		pinctrl-names = "default";
+
 		audd-gpios = <&tlmm 143 GPIO_ACTIVE_HIGH>;
 		mbhc-gpios = <&tlmm 56 GPIO_ACTIVE_HIGH>;
+
+		/*
+		 * Windows CHLD() exposes two logical AUDD children:
+		 * - AUDD\QCOM0437: MBHC
+		 * - AUDD\QCOM042C: audio adapter
+		 *
+		 * Keep them passive for now. The diagnostic AUDD driver only
+		 * populates these devices so that the Linux enumeration can be
+		 * compared with Windows without touching the SPI transport.
+		 */
+		mbhc@0 {
+			compatible = "qcom,sc8180x-xiaomi-audd-mbhc";
+			reg = <0>;
+			qcom,windows-hid = "AUDD\\QCOM0437";
+		};
+
+		audio-adapter@1 {
+			compatible = "qcom,sc8180x-xiaomi-audd-adapter";
+			reg = <1>;
+			qcom,windows-hid = "AUDD\\QCOM042C";
+		};
 	};
 };
 
