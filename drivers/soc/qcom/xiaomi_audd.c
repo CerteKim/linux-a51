@@ -15,6 +15,7 @@
 #include <linux/err.h>
 #include <linux/gpio/consumer.h>
 #include <linux/interrupt.h>
+#include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
@@ -39,6 +40,8 @@ struct xiaomi_audd {
 	struct mutex irq_lock;
 	atomic_t irq_count;
 	atomic_t irq_disabled;
+	unsigned long irq_start;
+	unsigned long irq_first;
 };
 
 static void xiaomi_audd_log_gpio(struct device *dev, const char *name,
@@ -62,7 +65,9 @@ static irqreturn_t xiaomi_audd_irq_handler(int irq, void *data)
 {
 	struct xiaomi_audd *audd = data;
 
-	atomic_inc(&audd->irq_count);
+	if (atomic_inc_return(&audd->irq_count) == 1)
+		WRITE_ONCE(audd->irq_first, jiffies);
+
 	if (!atomic_xchg(&audd->irq_disabled, 1))
 		disable_irq_nosync(irq);
 
@@ -113,6 +118,9 @@ static ssize_t irq_test_ms_store(struct device *dev,
 	struct xiaomi_audd *audd = dev_get_drvdata(dev);
 	char token[64];
 	unsigned int duration_ms;
+	unsigned long first;
+	unsigned long start;
+	int irq_count;
 	int index;
 	int ret;
 
@@ -130,6 +138,8 @@ static ssize_t irq_test_ms_store(struct device *dev,
 
 	atomic_set(&audd->irq_count, 0);
 	atomic_set(&audd->irq_disabled, 0);
+	WRITE_ONCE(audd->irq_start, jiffies);
+	WRITE_ONCE(audd->irq_first, 0);
 
 	ret = request_irq(audd->irqs[index].irq, xiaomi_audd_irq_handler,
 			  IRQF_NO_AUTOEN, dev_name(dev), audd);
@@ -150,9 +160,16 @@ static ssize_t irq_test_ms_store(struct device *dev,
 	if (atomic_read(&audd->irq_disabled))
 		enable_irq(audd->irqs[index].irq);
 
-	dev_info(dev, "IRQ test %s irq=%d count=%d\n",
-		 audd->irqs[index].name, audd->irqs[index].irq,
-		 atomic_read(&audd->irq_count));
+	irq_count = atomic_read(&audd->irq_count);
+	first = READ_ONCE(audd->irq_first);
+	start = READ_ONCE(audd->irq_start);
+	if (irq_count)
+		dev_info(dev, "IRQ test %s irq=%d count=%d first_ms=%u\n",
+			 audd->irqs[index].name, audd->irqs[index].irq,
+			 irq_count, jiffies_to_msecs(first - start));
+	else
+		dev_info(dev, "IRQ test %s irq=%d count=0\n",
+			 audd->irqs[index].name, audd->irqs[index].irq);
 
 out_unlock:
 	mutex_unlock(&audd->irq_lock);
