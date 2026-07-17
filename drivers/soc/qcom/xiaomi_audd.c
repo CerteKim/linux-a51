@@ -35,6 +35,8 @@ struct xiaomi_audd_irq {
 
 struct xiaomi_audd {
 	struct device *dev;
+	struct gpio_desc *audd_gpio;
+	struct gpio_desc *mbhc_gpio;
 	struct xiaomi_audd_irq irqs[XIAOMI_AUDD_MAX_IRQS];
 	unsigned int num_irqs;
 	struct mutex irq_lock;
@@ -43,6 +45,14 @@ struct xiaomi_audd {
 	unsigned long irq_start;
 	unsigned long irq_first;
 };
+
+static int xiaomi_audd_gpio_value(struct gpio_desc *gpiod)
+{
+	if (!gpiod)
+		return -ENOENT;
+
+	return gpiod_get_value_cansleep(gpiod);
+}
 
 static void xiaomi_audd_log_gpio(struct device *dev, const char *name,
 				 struct gpio_desc *gpiod)
@@ -91,6 +101,71 @@ static ssize_t irq_candidates_show(struct device *dev,
 	return len;
 }
 static DEVICE_ATTR_RO(irq_candidates);
+
+static ssize_t gpio_state_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	int audd_value = xiaomi_audd_gpio_value(audd->audd_gpio);
+	int mbhc_value = xiaomi_audd_gpio_value(audd->mbhc_gpio);
+
+	return sysfs_emit(buf, "audd=%d\nmbhc=%d\n", audd_value, mbhc_value);
+}
+static DEVICE_ATTR_RO(gpio_state);
+
+static ssize_t gpio_poll_ms_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	unsigned int duration_ms;
+	unsigned long start;
+	unsigned long end;
+	int audd_value;
+	int mbhc_value;
+	int audd_last;
+	int mbhc_last;
+	int changes = 0;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &duration_ms);
+	if (ret)
+		return ret;
+
+	if (!duration_ms || duration_ms > 30000)
+		return -EINVAL;
+
+	audd_last = xiaomi_audd_gpio_value(audd->audd_gpio);
+	mbhc_last = xiaomi_audd_gpio_value(audd->mbhc_gpio);
+	start = jiffies;
+	end = start + msecs_to_jiffies(duration_ms);
+
+	dev_info(dev, "GPIO poll start duration=%u ms audd=%d mbhc=%d\n",
+		 duration_ms, audd_last, mbhc_last);
+
+	while (time_before(jiffies, end)) {
+		msleep(20);
+
+		audd_value = xiaomi_audd_gpio_value(audd->audd_gpio);
+		mbhc_value = xiaomi_audd_gpio_value(audd->mbhc_gpio);
+
+		if (audd_value != audd_last || mbhc_value != mbhc_last) {
+			changes++;
+			dev_info(dev,
+				 "GPIO poll change[%d] elapsed_ms=%u audd=%d->%d mbhc=%d->%d\n",
+				 changes, jiffies_to_msecs(jiffies - start),
+				 audd_last, audd_value, mbhc_last, mbhc_value);
+			audd_last = audd_value;
+			mbhc_last = mbhc_value;
+		}
+	}
+
+	dev_info(dev, "GPIO poll done changes=%d audd=%d mbhc=%d\n",
+		 changes, audd_last, mbhc_last);
+
+	return count;
+}
+static DEVICE_ATTR_WO(gpio_poll_ms);
 
 static int xiaomi_audd_irq_index(struct xiaomi_audd *audd, const char *token)
 {
@@ -179,6 +254,8 @@ out_unlock:
 static DEVICE_ATTR_WO(irq_test_ms);
 
 static struct attribute *xiaomi_audd_attrs[] = {
+	&dev_attr_gpio_state.attr,
+	&dev_attr_gpio_poll_ms.attr,
 	&dev_attr_irq_candidates.attr,
 	&dev_attr_irq_test_ms.attr,
 	NULL,
@@ -237,8 +314,6 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
 	struct xiaomi_audd *audd;
-	struct gpio_desc *audd_gpio;
-	struct gpio_desc *mbhc_gpio;
 	struct device_node *child;
 	unsigned int child_count = 0;
 	int ret;
@@ -265,18 +340,18 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 		dev_info(dev,
 			 "no IRQ mapped; Windows qcgpio allocates AUDD GpioInt 0x0100 as ADCM IRQ1055\n");
 
-	audd_gpio = devm_gpiod_get_optional(dev, "audd", GPIOD_ASIS);
-	if (IS_ERR(audd_gpio))
-		return dev_err_probe(dev, PTR_ERR(audd_gpio),
+	audd->audd_gpio = devm_gpiod_get_optional(dev, "audd", GPIOD_ASIS);
+	if (IS_ERR(audd->audd_gpio))
+		return dev_err_probe(dev, PTR_ERR(audd->audd_gpio),
 				     "failed to request audd gpio\n");
 
-	mbhc_gpio = devm_gpiod_get_optional(dev, "mbhc", GPIOD_ASIS);
-	if (IS_ERR(mbhc_gpio))
-		return dev_err_probe(dev, PTR_ERR(mbhc_gpio),
+	audd->mbhc_gpio = devm_gpiod_get_optional(dev, "mbhc", GPIOD_ASIS);
+	if (IS_ERR(audd->mbhc_gpio))
+		return dev_err_probe(dev, PTR_ERR(audd->mbhc_gpio),
 				     "failed to request mbhc gpio\n");
 
-	xiaomi_audd_log_gpio(dev, "audd", audd_gpio);
-	xiaomi_audd_log_gpio(dev, "mbhc", mbhc_gpio);
+	xiaomi_audd_log_gpio(dev, "audd", audd->audd_gpio);
+	xiaomi_audd_log_gpio(dev, "mbhc", audd->mbhc_gpio);
 
 	for_each_available_child_of_node(dev->of_node, child) {
 		const char *hid = NULL;
