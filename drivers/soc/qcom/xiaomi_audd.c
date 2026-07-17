@@ -3,6 +3,8 @@
  * Xiaomi Book 12.4 Qualcomm AUDD diagnostic driver.
  *
  * Windows exposes \_SB.ADSP.SLM1.ADCM.AUDD on SPI4/CS0 with GPIO resources.
+ * The AUDD GpioInt pin 0x0100 is allocated by Windows qcgpio/GPIOClx as
+ * ADCM IRQ1055, not as a normal TLMM GPIO interrupt that Linux can map today.
  * This driver intentionally performs no SPI transfers and does not drive any
  * GPIO. It only verifies that the DT node can bind and that the GPIO lines can
  * be requested without changing their direction.
@@ -45,7 +47,8 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 		 dev->of_node);
 
 	if (!spi->irq)
-		dev_info(dev, "no IRQ mapped; Windows AUDD GpioInt 0x0100 remains unresolved\n");
+		dev_info(dev,
+			 "no IRQ mapped; Windows qcgpio allocates AUDD GpioInt 0x0100 as ADCM IRQ1055\n");
 
 	audd_gpio = devm_gpiod_get_optional(dev, "audd", GPIOD_ASIS);
 	if (IS_ERR(audd_gpio))

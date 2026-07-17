@@ -567,6 +567,10 @@
  * - SPI4 CS0, 8-bit, mode 0, 24 MHz
  * - child devices AUDD\QCOM0437 (MBHC) and AUDD\QCOM042C (audio adapter)
  *
+ * Windows allocates the GpioInt through ACPI\QCOM040D/qcgpio/GPIOClx as
+ * ADCM IRQ1055 (ADCM AllocConfig contains 0x041f). This is not a verified
+ * Linux TLMM/PDC GPIO number, so do not model it as a guessed &tlmm IRQ.
+ *
  * MBHC has a separate GpioIo \_SB.GIO0 pin 0x0038 (56), PullUp/OutputOnly.
  *
  * Do not model this as the SDM845-style WCD9340 SLIMbus codec yet: the
