@@ -11,14 +11,35 @@
  */
 
 #include <linux/device.h>
+#include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/gpio/consumer.h>
+#include <linux/interrupt.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 #include <linux/spi/spi.h>
+
+#define XIAOMI_AUDD_MAX_IRQS	8
+
+struct xiaomi_audd_irq {
+	const char *name;
+	int irq;
+};
+
+struct xiaomi_audd {
+	struct device *dev;
+	struct xiaomi_audd_irq irqs[XIAOMI_AUDD_MAX_IRQS];
+	unsigned int num_irqs;
+	struct mutex irq_lock;
+	atomic_t irq_count;
+	atomic_t irq_disabled;
+};
 
 static void xiaomi_audd_log_gpio(struct device *dev, const char *name,
 				 struct gpio_desc *gpiod)
@@ -37,9 +58,168 @@ static void xiaomi_audd_log_gpio(struct device *dev, const char *name,
 		dev_info(dev, "%s gpio requested, current value=%d\n", name, value);
 }
 
+static irqreturn_t xiaomi_audd_irq_handler(int irq, void *data)
+{
+	struct xiaomi_audd *audd = data;
+
+	atomic_inc(&audd->irq_count);
+	if (!atomic_xchg(&audd->irq_disabled, 1))
+		disable_irq_nosync(irq);
+
+	return IRQ_HANDLED;
+}
+
+static ssize_t irq_candidates_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	ssize_t len = 0;
+	unsigned int i;
+
+	if (!audd->num_irqs)
+		return sysfs_emit(buf, "none\n");
+
+	for (i = 0; i < audd->num_irqs; i++)
+		len += sysfs_emit_at(buf, len, "%u %s irq=%d\n", i,
+				     audd->irqs[i].name, audd->irqs[i].irq);
+
+	return len;
+}
+static DEVICE_ATTR_RO(irq_candidates);
+
+static int xiaomi_audd_irq_index(struct xiaomi_audd *audd, const char *token)
+{
+	unsigned int i;
+	u32 index;
+
+	if (!kstrtou32(token, 0, &index)) {
+		if (index < audd->num_irqs)
+			return index;
+		return -EINVAL;
+	}
+
+	for (i = 0; i < audd->num_irqs; i++) {
+		if (!strcmp(audd->irqs[i].name, token))
+			return i;
+	}
+
+	return -EINVAL;
+}
+
+static ssize_t irq_test_ms_store(struct device *dev,
+				 struct device_attribute *attr,
+				 const char *buf, size_t count)
+{
+	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	char token[64];
+	unsigned int duration_ms;
+	int index;
+	int ret;
+
+	if (sscanf(buf, "%63s %u", token, &duration_ms) != 2)
+		return -EINVAL;
+
+	if (!duration_ms || duration_ms > 30000)
+		return -EINVAL;
+
+	index = xiaomi_audd_irq_index(audd, token);
+	if (index < 0)
+		return index;
+
+	mutex_lock(&audd->irq_lock);
+
+	atomic_set(&audd->irq_count, 0);
+	atomic_set(&audd->irq_disabled, 0);
+
+	ret = request_irq(audd->irqs[index].irq, xiaomi_audd_irq_handler,
+			  IRQF_NO_AUTOEN, dev_name(dev), audd);
+	if (ret) {
+		dev_info(dev, "IRQ test %s irq=%d request failed: %d\n",
+			 audd->irqs[index].name, audd->irqs[index].irq, ret);
+		goto out_unlock;
+	}
+
+	dev_info(dev, "IRQ test %s irq=%d enabled for %u ms\n",
+		 audd->irqs[index].name, audd->irqs[index].irq, duration_ms);
+
+	enable_irq(audd->irqs[index].irq);
+	msleep(duration_ms);
+
+	free_irq(audd->irqs[index].irq, audd);
+
+	if (atomic_read(&audd->irq_disabled))
+		enable_irq(audd->irqs[index].irq);
+
+	dev_info(dev, "IRQ test %s irq=%d count=%d\n",
+		 audd->irqs[index].name, audd->irqs[index].irq,
+		 atomic_read(&audd->irq_count));
+
+out_unlock:
+	mutex_unlock(&audd->irq_lock);
+
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_WO(irq_test_ms);
+
+static struct attribute *xiaomi_audd_attrs[] = {
+	&dev_attr_irq_candidates.attr,
+	&dev_attr_irq_test_ms.attr,
+	NULL,
+};
+
+static const struct attribute_group xiaomi_audd_group = {
+	.attrs = xiaomi_audd_attrs,
+};
+
+static int xiaomi_audd_collect_irqs(struct spi_device *spi,
+				    struct xiaomi_audd *audd)
+{
+	struct device *dev = &spi->dev;
+	struct device_node *np = dev->of_node;
+	int irq_count;
+	int i;
+
+	irq_count = of_irq_count(np);
+	if (irq_count < 0)
+		return irq_count;
+
+	if (irq_count > XIAOMI_AUDD_MAX_IRQS) {
+		dev_info(dev, "limiting %d IRQ candidates to %u\n",
+			 irq_count, XIAOMI_AUDD_MAX_IRQS);
+		irq_count = XIAOMI_AUDD_MAX_IRQS;
+	}
+
+	for (i = 0; i < irq_count; i++) {
+		const char *name;
+		int irq;
+
+		irq = of_irq_get(np, i);
+		if (irq == -EPROBE_DEFER)
+			return irq;
+		if (irq < 0) {
+			dev_info(dev, "IRQ candidate[%d] mapping failed: %d\n", i, irq);
+			continue;
+		}
+
+		if (of_property_read_string_index(np, "interrupt-names", i, &name))
+			name = devm_kasprintf(dev, GFP_KERNEL, "irq%d", i);
+		if (!name)
+			return -ENOMEM;
+
+		audd->irqs[audd->num_irqs].name = name;
+		audd->irqs[audd->num_irqs].irq = irq;
+		dev_info(dev, "IRQ candidate[%u] %s -> irq=%d\n",
+			 audd->num_irqs, name, irq);
+		audd->num_irqs++;
+	}
+
+	return 0;
+}
+
 static int xiaomi_audd_probe(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
+	struct xiaomi_audd *audd;
 	struct gpio_desc *audd_gpio;
 	struct gpio_desc *mbhc_gpio;
 	struct device_node *child;
@@ -52,7 +232,19 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 		 spi->mode, spi->bits_per_word, spi->max_speed_hz, spi->irq,
 		 dev->of_node);
 
-	if (!spi->irq)
+	audd = devm_kzalloc(dev, sizeof(*audd), GFP_KERNEL);
+	if (!audd)
+		return -ENOMEM;
+
+	audd->dev = dev;
+	mutex_init(&audd->irq_lock);
+	dev_set_drvdata(dev, audd);
+
+	ret = xiaomi_audd_collect_irqs(spi, audd);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to collect IRQ candidates\n");
+
+	if (!audd->num_irqs)
 		dev_info(dev,
 			 "no IRQ mapped; Windows qcgpio allocates AUDD GpioInt 0x0100 as ADCM IRQ1055\n");
 
@@ -91,6 +283,10 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 	if (ret)
 		return dev_err_probe(dev, ret,
 				     "failed to populate passive AUDD child devices\n");
+
+	ret = devm_device_add_group(dev, &xiaomi_audd_group);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to add diagnostic sysfs attributes\n");
 
 	dev_info(dev,
 		 "diagnostic probe complete, enumerated %u child device(s), no SPI transfer was issued\n",

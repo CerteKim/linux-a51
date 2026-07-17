@@ -615,6 +615,27 @@
 		mbhc-gpios = <&tlmm 56 GPIO_ACTIVE_HIGH>;
 
 		/*
+		 * Manual diagnostics only. These are the PDC-backed parent IRQ
+		 * resources exposed by Windows for QCOM040D/qcgpio. They are
+		 * candidates for locating AUDD GpioInt 0x0100, not production
+		 * wiring for WCD9340.
+		 */
+		interrupts-extended = <&pdc 73 IRQ_TYPE_LEVEL_HIGH>,
+				      <&pdc 91 IRQ_TYPE_EDGE_RISING>,
+				      <&pdc 89 IRQ_TYPE_LEVEL_HIGH>,
+				      <&pdc 44 IRQ_TYPE_EDGE_RISING>,
+				      <&pdc 78 IRQ_TYPE_EDGE_RISING>,
+				      <&pdc 111 IRQ_TYPE_EDGE_RISING>,
+				      <&pdc 112 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "qcgpio-gsi249-pdc73",
+				  "qcgpio-gsi25b-pdc91",
+				  "qcgpio-gsi259-pdc89",
+				  "qcgpio-gsi22c-pdc44",
+				  "qcgpio-gsi24e-pdc78",
+				  "qcgpio-gsi292-pdc111",
+				  "qcgpio-gsi293-pdc112";
+
+		/*
 		 * Windows CHLD() exposes two logical AUDD children:
 		 * - AUDD\QCOM0437: MBHC
 		 * - AUDD\QCOM042C: audio adapter
