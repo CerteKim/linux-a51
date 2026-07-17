@@ -118,6 +118,22 @@ enum qcom_slim_ngd_state {
 	QCOM_SLIM_NGD_CTRL_DOWN,
 };
 
+static const char *qcom_slim_ngd_state_name(enum qcom_slim_ngd_state state)
+{
+	switch (state) {
+	case QCOM_SLIM_NGD_CTRL_AWAKE:
+		return "awake";
+	case QCOM_SLIM_NGD_CTRL_IDLE:
+		return "idle";
+	case QCOM_SLIM_NGD_CTRL_ASLEEP:
+		return "asleep";
+	case QCOM_SLIM_NGD_CTRL_DOWN:
+		return "down";
+	default:
+		return "unknown";
+	}
+}
+
 struct qcom_slim_ngd_qmi {
 	struct qmi_handle qmi;
 	struct sockaddr_qrtr svc_info;
@@ -1373,6 +1389,12 @@ static int qcom_slim_ngd_qmi_new_server(struct qmi_handle *hdl,
 	qmi->svc_info.sq_node = service->node;
 	qmi->svc_info.sq_port = service->port;
 
+	dev_info(ctrl->dev,
+		 "QMI service arrived: svc=0x%x ver=%u inst=%u node=%u port=%u state=%s handle=%p\n",
+		 service->service, service->version, service->instance,
+		 service->node, service->port,
+		 qcom_slim_ngd_state_name(ctrl->state), ctrl->qmi.handle);
+
 	complete(&ctrl->qmi_up);
 
 	return 0;
@@ -1385,6 +1407,12 @@ static void qcom_slim_ngd_qmi_del_server(struct qmi_handle *hdl,
 		container_of(hdl, struct qcom_slim_ngd_qmi, svc_event_hdl);
 	struct qcom_slim_ngd_ctrl *ctrl =
 		container_of(qmi, struct qcom_slim_ngd_ctrl, qmi);
+
+	dev_info(ctrl->dev,
+		 "QMI service removed: svc=0x%x ver=%u inst=%u node=%u port=%u state=%s handle=%p\n",
+		 service->service, service->version, service->instance,
+		 service->node, service->port,
+		 qcom_slim_ngd_state_name(ctrl->state), ctrl->qmi.handle);
 
 	reinit_completion(&ctrl->qmi_up);
 	qmi->svc_info.sq_node = 0;
@@ -1400,6 +1428,10 @@ static int qcom_slim_ngd_qmi_svc_event_init(struct qcom_slim_ngd_ctrl *ctrl)
 {
 	struct qcom_slim_ngd_qmi *qmi = &ctrl->qmi;
 	int ret;
+
+	dev_info(ctrl->dev, "QMI service lookup: svc=0x%x ver=%u inst=%u\n",
+		 SLIMBUS_QMI_SVC_ID, SLIMBUS_QMI_SVC_V1,
+		 SLIMBUS_QMI_INS_ID);
 
 	ret = qmi_handle_init(&qmi->svc_event_hdl, 0,
 				&qcom_slim_ngd_qmi_svc_event_ops, NULL);
@@ -1453,10 +1485,23 @@ static void qcom_slim_ngd_up_worker(struct work_struct *work)
 
 	ctrl = container_of(work, struct qcom_slim_ngd_ctrl, ngd_up_work);
 
+	dev_info(ctrl->dev,
+		 "NGD up worker: state=%s handle=%p svc_node=%u svc_port=%u\n",
+		 qcom_slim_ngd_state_name(ctrl->state), ctrl->qmi.handle,
+		 ctrl->qmi.svc_info.sq_node, ctrl->qmi.svc_info.sq_port);
+
+	if (ctrl->qmi.handle) {
+		dev_info(ctrl->dev, "NGD already enabled; ignoring duplicate up event\n");
+		return;
+	}
+
 	/* Make sure qmi service is up before continuing */
 	if (!wait_for_completion_interruptible_timeout(&ctrl->qmi_up,
 						       msecs_to_jiffies(MSEC_PER_SEC))) {
-		dev_err(ctrl->dev, "QMI wait timeout\n");
+		dev_err(ctrl->dev,
+			"QMI wait timeout: state=%s handle=%p svc_node=%u svc_port=%u\n",
+			qcom_slim_ngd_state_name(ctrl->state), ctrl->qmi.handle,
+			ctrl->qmi.svc_info.sq_node, ctrl->qmi.svc_info.sq_port);
 		return;
 	}
 
@@ -1506,8 +1551,13 @@ static void slim_pd_status(int state, char *svc_path, void *priv)
 {
 	struct qcom_slim_ngd_ctrl *ctrl = (struct qcom_slim_ngd_ctrl *)priv;
 
+	dev_info(ctrl->dev, "PDR state=%d path=%s state=%s handle=%p\n",
+		 state, svc_path ?: "(null)",
+		 qcom_slim_ngd_state_name(ctrl->state), ctrl->qmi.handle);
+
 	qcom_slim_ngd_ssr_pdr_notify(ctrl, state);
 }
+
 static int of_qcom_slim_ngd_register(struct device *parent,
 				     struct qcom_slim_ngd_ctrl *ctrl)
 {
