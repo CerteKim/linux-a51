@@ -569,6 +569,10 @@
  *
  * MBHC has a separate GpioIo \_SB.GIO0 pin 0x0038 (56), PullUp/OutputOnly.
  *
+ * The GpioInt pin encoding is not the same as GpioIo: Windows reports SDC2
+ * card-detect as GpioInt 0x00c0 while the matching GpioIo is 0x0060 and Linux
+ * uses TLMM GPIO96. Model AUDD GpioInt 0x0100 as TLMM GPIO128 for diagnostics.
+ *
  * Do not model this as the SDM845-style WCD9340 SLIMbus codec yet: the
  * Windows resources expose an SPI/WDSP-backed AUDD device and do not confirm
  * WCD9340 GPIO54 IRQ or GPIO64 reset wiring on this machine.
@@ -582,6 +586,7 @@
 	audd@0 {
 		compatible = "qcom,sc8180x-xiaomi-audd";
 		reg = <0>;
+		interrupts-extended = <&tlmm 128 IRQ_TYPE_EDGE_RISING>;
 		spi-max-frequency = <24000000>;
 
 		audd-gpios = <&tlmm 143 GPIO_ACTIVE_HIGH>;

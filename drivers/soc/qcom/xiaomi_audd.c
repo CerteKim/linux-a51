@@ -11,6 +11,7 @@
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/gpio/consumer.h>
+#include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/spi/spi.h>
@@ -32,11 +33,21 @@ static void xiaomi_audd_log_gpio(struct device *dev, const char *name,
 		dev_info(dev, "%s gpio requested, current value=%d\n", name, value);
 }
 
+static irqreturn_t xiaomi_audd_irq_thread(int irq, void *data)
+{
+	struct device *dev = data;
+
+	dev_info_ratelimited(dev, "diagnostic IRQ %d fired\n", irq);
+
+	return IRQ_HANDLED;
+}
+
 static int xiaomi_audd_probe(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
 	struct gpio_desc *audd_gpio;
 	struct gpio_desc *mbhc_gpio;
+	int ret;
 
 	dev_info(dev,
 		 "probe on SPI bus=%d cs=%u mode=0x%x bits_per_word=%u max_speed=%u irq=%d node=%pOF\n",
@@ -44,8 +55,20 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 		 spi->mode, spi->bits_per_word, spi->max_speed_hz, spi->irq,
 		 dev->of_node);
 
-	if (!spi->irq)
+	if (spi->irq) {
+		ret = devm_request_threaded_irq(dev, spi->irq, NULL,
+						xiaomi_audd_irq_thread,
+						IRQF_ONESHOT, dev_name(dev),
+						dev);
+		if (ret)
+			return dev_err_probe(dev, ret,
+					     "failed to request diagnostic IRQ %d\n",
+					     spi->irq);
+
+		dev_info(dev, "diagnostic IRQ %d requested\n", spi->irq);
+	} else {
 		dev_info(dev, "no IRQ mapped; Windows AUDD GpioInt 0x0100 remains unresolved\n");
+	}
 
 	audd_gpio = devm_gpiod_get_optional(dev, "audd", GPIOD_ASIS);
 	if (IS_ERR(audd_gpio))
