@@ -571,6 +571,23 @@
  * ADCM IRQ1055 (ADCM AllocConfig contains 0x041f). This is not a verified
  * Linux TLMM/PDC GPIO number, so do not model it as a guessed &tlmm IRQ.
  *
+ * QCOM040D's ACPI resources describe the normal TLMM interrupt plus several
+ * PDC-backed parent interrupts. Subtracting the GIC SPI offset gives:
+ * - GSI 0x0f0 -> GIC_SPI 208, the TLMM summary interrupt
+ * - GSI 0x249 -> GIC_SPI 553, PDC 73
+ * - GSI 0x25b -> GIC_SPI 571, PDC 91, GPIO123 in Linux's wakeirq map
+ * - GSI 0x259 -> GIC_SPI 569, PDC 89, GPIO121 in Linux's wakeirq map
+ * - GSI 0x22c -> GIC_SPI 524, PDC 44, GPIO37 in Linux's wakeirq map
+ * - GSI 0x24e -> GIC_SPI 558, PDC 78, GPIO104 in Linux's wakeirq map
+ * - GSI 0x292 -> GIC_SPI 626, PDC 111, GPIO177 in Linux's wakeirq map
+ * - GSI 0x293 -> GIC_SPI 627, PDC 112, GPIO180 in Linux's wakeirq map
+ *
+ * The GIO0 _AEI method uses GpioInt 0x0140 for lid events but reads the
+ * actual lid state from GpioIo 0x0079 (GPIO121). That proves at least some
+ * 0x0100+ GIO0 numbers are qcgpio/GPIOClx event IDs, not raw TLMM pins.
+ * The AUDD 0x0100 event therefore needs a real qcgpio/PDC mapping before it
+ * can safely be used as the WCD9340 parent interrupt.
+ *
  * MBHC has a separate GpioIo \_SB.GIO0 pin 0x0038 (56), PullUp/OutputOnly.
  *
  * Do not model this as the SDM845-style WCD9340 SLIMbus codec yet: the
