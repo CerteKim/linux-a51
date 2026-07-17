@@ -153,6 +153,8 @@ static int slim_add_device(struct slim_controller *ctrl,
 			   struct slim_device *sbdev,
 			   struct device_node *node)
 {
+	int ret;
+
 	sbdev->dev.bus = &slimbus_bus;
 	sbdev->dev.parent = ctrl->dev;
 	sbdev->dev.release = slim_dev_release;
@@ -169,7 +171,15 @@ static int slim_add_device(struct slim_controller *ctrl,
 				  sbdev->e_addr.dev_index,
 				  sbdev->e_addr.instance);
 
-	return device_register(&sbdev->dev);
+	ret = device_register(&sbdev->dev);
+	if (ret)
+		dev_err(ctrl->dev, "SLIM OF child %pOF: device_register failed: %d\n",
+			node, ret);
+	else
+		dev_info(ctrl->dev, "SLIM OF child %pOF: registered as %s\n",
+			 node, dev_name(&sbdev->dev));
+
+	return ret;
 }
 
 static struct slim_device *slim_alloc_device(struct slim_controller *ctrl,
@@ -198,8 +208,12 @@ static void of_register_slim_devices(struct slim_controller *ctrl)
 	struct device *dev = ctrl->dev;
 	struct device_node *node;
 
-	if (!ctrl->dev->of_node)
+	if (!ctrl->dev->of_node) {
+		dev_info(dev, "SLIM OF scan skipped: controller has no of_node\n");
 		return;
+	}
+
+	dev_info(dev, "SLIM OF scan: parent=%pOF\n", ctrl->dev->of_node);
 
 	for_each_child_of_node(ctrl->dev->of_node, node) {
 		struct slim_device *sbdev;
@@ -209,8 +223,12 @@ static void of_register_slim_devices(struct slim_controller *ctrl)
 		int manf_id, prod_code;
 
 		compat = of_get_property(node, "compatible", NULL);
-		if (!compat)
+		if (!compat) {
+			dev_info(dev, "SLIM OF child %pOF: no compatible\n", node);
 			continue;
+		}
+
+		dev_info(dev, "SLIM OF child %pOF: compatible=%s\n", node, compat);
 
 		ret = sscanf(compat, "slim%x,%x", &manf_id, &prod_code);
 		if (ret != 2) {
@@ -231,9 +249,15 @@ static void of_register_slim_devices(struct slim_controller *ctrl)
 		e_addr.manf_id = manf_id;
 		e_addr.prod_code = prod_code;
 
+		dev_info(dev, "SLIM OF child %pOF: ea=%x,%x,%x,%x\n",
+			 node, e_addr.manf_id, e_addr.prod_code,
+			 e_addr.dev_index, e_addr.instance);
+
 		sbdev = slim_alloc_device(ctrl, &e_addr, node);
-		if (!sbdev)
+		if (!sbdev) {
+			dev_err(dev, "SLIM OF child %pOF: allocation failed\n", node);
 			continue;
+		}
 	}
 }
 
