@@ -1249,14 +1249,33 @@ static void qcom_slim_ngd_notify_slaves(struct qcom_slim_ngd_ctrl *ctrl)
 {
 	struct slim_device *sbdev;
 	struct device_node *node;
+	int ret;
 
 	for_each_child_of_node(ctrl->ngd->pdev->dev.of_node, node) {
-		sbdev = of_slim_get_device(&ctrl->ctrl, node);
-		if (!sbdev)
-			continue;
+		dev_info(ctrl->dev, "SLIM child %pOF: requesting logical address\n",
+			 node);
 
-		if (slim_get_logical_addr(sbdev))
-			dev_err(ctrl->dev, "Failed to get logical address\n");
+		sbdev = of_slim_get_device(&ctrl->ctrl, node);
+		if (!sbdev) {
+			dev_err(ctrl->dev, "SLIM child %pOF: device lookup failed\n",
+				node);
+			continue;
+		}
+
+		ret = slim_get_logical_addr(sbdev);
+		if (ret)
+			dev_err(ctrl->dev,
+				"SLIM child %pOF: logical address failed: ret=%d ea=%x,%x,%x,%x\n",
+				node, ret, sbdev->e_addr.manf_id,
+				sbdev->e_addr.prod_code, sbdev->e_addr.dev_index,
+				sbdev->e_addr.instance);
+		else
+			dev_info(ctrl->dev,
+				 "SLIM child %pOF: logical address=0x%x status=%u ea=%x,%x,%x,%x\n",
+				 node, sbdev->laddr, sbdev->status,
+				 sbdev->e_addr.manf_id, sbdev->e_addr.prod_code,
+				 sbdev->e_addr.dev_index, sbdev->e_addr.instance);
+
 		put_device(&sbdev->dev);
 	}
 }

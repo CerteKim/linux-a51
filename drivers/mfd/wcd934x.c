@@ -221,6 +221,8 @@ static int wcd934x_slim_probe(struct slim_device *sdev)
 	if (!ddata)
 		return	-ENOMEM;
 
+	ddata->dev = dev;
+
 	ddata->irq = of_irq_get(np, 0);
 	if (ddata->irq < 0)
 		return dev_err_probe(ddata->dev, ddata->irq,
@@ -261,7 +263,6 @@ static int wcd934x_slim_probe(struct slim_device *sdev)
 	gpiod_set_value(reset_gpio, 1);
 	msleep(20);
 
-	ddata->dev = dev;
 	dev_set_drvdata(dev, ddata);
 
 	return 0;

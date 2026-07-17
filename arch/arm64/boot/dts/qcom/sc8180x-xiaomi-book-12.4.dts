@@ -871,6 +871,21 @@
 			reg = <1>;
 			#address-cells = <2>;
 			#size-cells = <0>;
+
+			/*
+			 * Passive WCD9340 discovery only. Do not provide the
+			 * IRQ/reset/backend wiring until the Windows AUDD/ADCM
+			 * interrupt path is understood.
+			 */
+			wcd9340_ifd: ifd@0,0 {
+				compatible = "slim217,250";
+				reg = <0 0>;
+			};
+
+			wcd9340: codec@1,0 {
+				compatible = "slim217,250";
+				reg = <1 0>;
+			};
 		};
 	};
 };
