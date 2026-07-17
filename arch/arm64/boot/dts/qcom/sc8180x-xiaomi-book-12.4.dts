@@ -620,14 +620,12 @@
 		 * candidates for locating AUDD GpioInt 0x0100, not production
 		 * wiring for WCD9340.
 		 */
-		interrupts-extended = <&pdc 73 IRQ_TYPE_LEVEL_HIGH>,
-				      <&pdc 91 IRQ_TYPE_EDGE_RISING>,
+		interrupts-extended = <&pdc 91 IRQ_TYPE_EDGE_RISING>,
 				      <&pdc 44 IRQ_TYPE_EDGE_RISING>,
 				      <&pdc 78 IRQ_TYPE_EDGE_RISING>,
 				      <&pdc 111 IRQ_TYPE_EDGE_RISING>,
 				      <&pdc 112 IRQ_TYPE_EDGE_RISING>;
-		interrupt-names = "qcgpio-gsi249-pdc73",
-				  "qcgpio-gsi25b-pdc91",
+		interrupt-names = "qcgpio-gsi25b-pdc91",
 				  "qcgpio-gsi22c-pdc44",
 				  "qcgpio-gsi24e-pdc78",
 				  "qcgpio-gsi292-pdc111",
