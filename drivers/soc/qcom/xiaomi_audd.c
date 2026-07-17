@@ -15,7 +15,9 @@
 #include <linux/gpio/consumer.h>
 #include <linux/module.h>
 #include <linux/of.h>
+#include <linux/of_device.h>
 #include <linux/of_platform.h>
+#include <linux/platform_device.h>
 #include <linux/spi/spi.h>
 
 static void xiaomi_audd_log_gpio(struct device *dev, const char *name,
@@ -97,6 +99,25 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 	return 0;
 }
 
+static int xiaomi_audd_child_probe(struct platform_device *pdev)
+{
+	struct device *dev = &pdev->dev;
+	const char *function = of_device_get_match_data(dev);
+	const char *hid = NULL;
+	u32 reg;
+
+	of_property_read_string(dev->of_node, "qcom,windows-hid", &hid);
+
+	if (!of_property_read_u32(dev->of_node, "reg", &reg))
+		dev_info(dev, "passive %s child bound: reg=%u windows-hid=%s\n",
+			 function ?: "AUDD", reg, hid ?: "(none)");
+	else
+		dev_info(dev, "passive %s child bound: windows-hid=%s\n",
+			 function ?: "AUDD", hid ?: "(none)");
+
+	return 0;
+}
+
 static const struct of_device_id xiaomi_audd_of_match[] = {
 	{ .compatible = "qcom,sc8180x-xiaomi-audd" },
 	{ }
@@ -117,7 +138,50 @@ static struct spi_driver xiaomi_audd_driver = {
 		.of_match_table = xiaomi_audd_of_match,
 	},
 };
-module_spi_driver(xiaomi_audd_driver);
+
+static const struct of_device_id xiaomi_audd_child_of_match[] = {
+	{
+		.compatible = "qcom,sc8180x-xiaomi-audd-mbhc",
+		.data = "MBHC",
+	},
+	{
+		.compatible = "qcom,sc8180x-xiaomi-audd-adapter",
+		.data = "audio adapter",
+	},
+	{ }
+};
+MODULE_DEVICE_TABLE(of, xiaomi_audd_child_of_match);
+
+static struct platform_driver xiaomi_audd_child_driver = {
+	.probe = xiaomi_audd_child_probe,
+	.driver = {
+		.name = "qcom-xiaomi-audd-child",
+		.of_match_table = xiaomi_audd_child_of_match,
+	},
+};
+
+static int __init xiaomi_audd_init(void)
+{
+	int ret;
+
+	ret = platform_driver_register(&xiaomi_audd_child_driver);
+	if (ret)
+		return ret;
+
+	ret = spi_register_driver(&xiaomi_audd_driver);
+	if (ret)
+		platform_driver_unregister(&xiaomi_audd_child_driver);
+
+	return ret;
+}
+module_init(xiaomi_audd_init);
+
+static void __exit xiaomi_audd_exit(void)
+{
+	spi_unregister_driver(&xiaomi_audd_driver);
+	platform_driver_unregister(&xiaomi_audd_child_driver);
+}
+module_exit(xiaomi_audd_exit);
 
 MODULE_DESCRIPTION("Xiaomi Book 12.4 Qualcomm AUDD diagnostic driver");
 MODULE_LICENSE("GPL");
