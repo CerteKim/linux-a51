@@ -13,6 +13,7 @@
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
 #include <dt-bindings/soc/qcom,apr.h>
+#include <dt-bindings/sound/qcom,q6afe.h>
 #include <dt-bindings/sound/qcom,q6asm.h>
 #include "sc8180x.dtsi"
 #include "sc8180x-pmics.dtsi"
@@ -28,6 +29,13 @@
 	sound: sound {
 		compatible = "qcom,sdm845-sndcard";
 		model = "Xiaomi Book 12.4";
+
+		audio-routing =
+			"RX_BIAS", "MCLK",
+			"AMIC2", "MIC BIAS2",
+			"MM_DL1", "MultiMedia1 Playback",
+			"MM_DL3", "MultiMedia3 Playback",
+			"MultiMedia2 Capture", "MM_UL2";
 
 		mm1-dai-link {
 			link-name = "MultiMedia1";
@@ -50,6 +58,54 @@
 
 			cpu {
 				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+			};
+		};
+
+		slim-dai-link {
+			link-name = "SLIM Playback";
+
+			cpu {
+				sound-dai = <&q6afedai SLIMBUS_0_RX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&wcd9340 0>;
+			};
+		};
+
+		slimcap-dai-link {
+			link-name = "SLIM Capture";
+
+			cpu {
+				sound-dai = <&q6afedai SLIMBUS_0_TX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&wcd9340 1>;
+			};
+		};
+
+		slim-wcd-dai-link {
+			link-name = "SLIM WCD Playback";
+
+			cpu {
+				sound-dai = <&q6afedai SLIMBUS_1_RX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&wcd9340 2>;
 			};
 		};
 	};
@@ -590,9 +646,9 @@
  *
  * MBHC has a separate GpioIo \_SB.GIO0 pin 0x0038 (56), PullUp/OutputOnly.
  *
- * Do not model this as the SDM845-style WCD9340 SLIMbus codec yet: the
- * Windows resources expose an SPI/WDSP-backed AUDD device and do not confirm
- * WCD9340 GPIO54 IRQ or GPIO64 reset wiring on this machine.
+ * The Lenovo Flex 5G SC8180X DT models the same WCD9340 family with GPIO143
+ * as reset and GPIO123 as the parent IRQ. For this experiment, keep AUDD as a
+ * passive Windows-topology diagnostic node and let WCD9340 own GPIO143.
  */
 &spi3 {
 	pinctrl-0 = <&spi3_active>;
@@ -608,10 +664,9 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		pinctrl-0 = <&audd_gpio_state>, <&audd_mbhc_gpio_state>;
+		pinctrl-0 = <&audd_mbhc_gpio_state>;
 		pinctrl-names = "default";
 
-		audd-gpios = <&tlmm 143 GPIO_ACTIVE_HIGH>;
 		mbhc-gpios = <&tlmm 56 GPIO_ACTIVE_HIGH>;
 
 		/*
@@ -906,11 +961,6 @@
 			#address-cells = <2>;
 			#size-cells = <0>;
 
-			/*
-			 * Passive WCD9340 discovery only. Do not provide the
-			 * IRQ/reset/backend wiring until the Windows AUDD/ADCM
-			 * interrupt path is understood.
-			 */
 			wcd9340_ifd: ifd@0,0 {
 				compatible = "slim217,250";
 				reg = <0 0>;
@@ -920,7 +970,45 @@
 				compatible = "slim217,250";
 				reg = <1 0>;
 				slim-ifc-dev = <&wcd9340_ifd>;
-				qcom,xiaomi-passive-diag;
+
+				#sound-dai-cells = <1>;
+
+				interrupts-extended = <&tlmm 123 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-controller;
+				#interrupt-cells = <1>;
+
+				clock-names = "extclk";
+				clocks = <&rpmhcc RPMH_LN_BB_CLK2>;
+
+				#clock-cells = <0>;
+				clock-frequency = <9600000>;
+				clock-output-names = "mclk";
+
+				pinctrl-0 = <&wcd_intr_default>, <&wcd_reset_default>;
+				pinctrl-names = "default";
+
+				reset-gpios = <&tlmm 143 GPIO_ACTIVE_HIGH>;
+
+				vdd-buck-sido-supply = <&vreg_s4a_1p8>;
+				vdd-buck-supply = <&vreg_s4a_1p8>;
+				vdd-tx-supply = <&vreg_s4a_1p8>;
+				vdd-rx-supply = <&vreg_s4a_1p8>;
+				vdd-io-supply = <&vreg_s4a_1p8>;
+
+				qcom,micbias1-microvolt = <1800000>;
+				qcom,micbias2-microvolt = <2850000>;
+				qcom,micbias3-microvolt = <2850000>;
+				qcom,micbias4-microvolt = <1800000>;
+
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				wcdgpio: gpio-controller@42 {
+					compatible = "qcom,wcd9340-gpio";
+					gpio-controller;
+					#gpio-cells = <2>;
+					reg = <0x42 0x2>;
+				};
 			};
 		};
 	};
@@ -1105,7 +1193,7 @@
 		bias-pull-up;
 	};
 
-	audd_gpio_state: audd-gpio-state {
+	wcd_reset_default: wcd-reset-default-state {
 		pins = "gpio143";
 		function = "gpio";
 
@@ -1119,6 +1207,15 @@
 
 		bias-pull-up;
 		drive-strength = <2>;
+	};
+
+	wcd_intr_default: wcd-intr-default-state {
+		pins = "gpio123";
+		function = "gpio";
+
+		bias-pull-down;
+		drive-strength = <2>;
+		input-enable;
 	};
 
 	i2c7_active: i2c7-active-state {

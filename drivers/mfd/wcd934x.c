@@ -326,15 +326,6 @@ static const struct attribute_group wcd934x_diag_attr_group = {
 	.attrs = wcd934x_diag_attrs,
 };
 
-static bool wcd934x_xiaomi_book12_passive_diag(struct slim_device *sdev)
-{
-	return of_machine_is_compatible("xiaomi,book-12.4") &&
-		sdev->e_addr.manf_id == SLIM_MANF_ID_QCOM &&
-		sdev->e_addr.prod_code == SLIM_PROD_CODE_WCD9340 &&
-		sdev->e_addr.dev_index == SLIM_DEV_IDX_WCD9340 &&
-		sdev->e_addr.instance == SLIM_DEV_INSTANCE_ID_WCD9340;
-}
-
 static int wcd934x_bring_up(struct wcd934x_ddata *ddata)
 {
 	struct regmap *regmap = ddata->regmap;
@@ -457,8 +448,7 @@ static int wcd934x_slim_probe(struct slim_device *sdev)
 		return	-ENOMEM;
 
 	ddata->dev = dev;
-	ddata->passive_diag = of_property_read_bool(np, "qcom,xiaomi-passive-diag") ||
-			      wcd934x_xiaomi_book12_passive_diag(sdev);
+	ddata->passive_diag = of_property_read_bool(np, "qcom,xiaomi-passive-diag");
 
 	dev_info(dev, "probe of_node=%pOF passive_diag=%u eaddr=%x:%x:%x:%x\n",
 		 np, ddata->passive_diag, sdev->e_addr.manf_id,
