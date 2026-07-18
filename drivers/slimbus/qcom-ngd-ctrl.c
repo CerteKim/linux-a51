@@ -627,6 +627,11 @@ static void qcom_slim_ngd_rx(struct qcom_slim_ngd_ctrl *ctrl, u8 *buf)
 		mt == SLIM_MSG_MT_SRC_REFERRED_USER)
 		queue_work(ctrl->mwq, &ctrl->m_work);
 
+	if (mc == SLIM_USR_MC_ADDR_REPLY &&
+	    mt == SLIM_MSG_MT_SRC_REFERRED_USER)
+		dev_info(ctrl->dev, "ADDR_REPLY raw len=%u tid=%u data=%*phN\n",
+			 len, buf[3], len > 4 ? len - 4 : 0, &buf[4]);
+
 	if (mc == SLIM_MSG_MC_REPLY_INFORMATION ||
 	    mc == SLIM_MSG_MC_REPLY_VALUE || (mc == SLIM_USR_MC_ADDR_REPLY &&
 	    mt == SLIM_MSG_MT_SRC_REFERRED_USER) ||
@@ -1136,6 +1141,11 @@ static int qcom_slim_ngd_get_laddr(struct slim_controller *ctrl,
 		slim_free_txn_tid(ctrl, &txn);
 		return ret;
 	}
+
+	dev_info(ctrl->dev,
+		 "ADDR_QUERY ea=%x,%x,%x,%x reply=%10phN laddr=0x%x\n",
+		 ea->manf_id, ea->prod_code, ea->dev_index, ea->instance,
+		 rbuf, rbuf[6]);
 
 	if (!memcmp(rbuf, failed_ea, 6))
 		return -ENXIO;
