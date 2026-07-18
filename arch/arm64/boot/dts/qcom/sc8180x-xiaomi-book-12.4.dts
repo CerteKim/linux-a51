@@ -1028,24 +1028,6 @@
 					clock-names = "iface";
 					#address-cells = <2>;
 					#size-cells = <0>;
-
-					left_spkr: speaker@0,5 {
-						compatible = "sdw10217211000";
-						reg = <0 5>;
-						powerdown-gpios = <&wcdgpio 1 GPIO_ACTIVE_LOW>;
-						#thermal-sensor-cells = <0>;
-						sound-name-prefix = "SpkrLeft";
-						#sound-dai-cells = <0>;
-					};
-
-					right_spkr: speaker@0,4 {
-						compatible = "sdw10217211000";
-						reg = <0 4>;
-						powerdown-gpios = <&wcdgpio 2 GPIO_ACTIVE_LOW>;
-						#thermal-sensor-cells = <0>;
-						sound-name-prefix = "SpkrRight";
-						#sound-dai-cells = <0>;
-					};
 				};
 			};
 		};
