@@ -18,6 +18,7 @@
  * @extclk:	External clock
  * @dev:	device instance of wcd934x slim device
  * @irq:	irq for wcd934x.
+ * @passive_diag: read-only diagnostic mode without IRQ/MFD children.
  */
 struct wcd934x_ddata {
 	struct regulator_bulk_data supplies[WCD934X_MAX_SUPPLY];
@@ -26,6 +27,7 @@ struct wcd934x_ddata {
 	struct clk *extclk;
 	struct device *dev;
 	int irq;
+	bool passive_diag;
 };
 
 #endif /* __WCD934X_H__ */

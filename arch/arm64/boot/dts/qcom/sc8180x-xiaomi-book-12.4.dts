@@ -919,6 +919,7 @@
 			wcd9340: codec@1,0 {
 				compatible = "slim217,250";
 				reg = <1 0>;
+				qcom,xiaomi-passive-diag;
 			};
 		};
 	};

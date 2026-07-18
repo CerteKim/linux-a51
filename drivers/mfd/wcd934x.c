@@ -120,6 +120,212 @@ static const struct regmap_config wcd934x_regmap_config = {
 	.volatile_reg = wcd934x_is_volatile_register,
 };
 
+struct wcd934x_diag_reg {
+	const char *name;
+	unsigned int reg;
+};
+
+static const struct wcd934x_diag_reg wcd934x_diag_regs[] = {
+	{ "chip_id_byte0", WCD934X_CHIP_TIER_CTRL_CHIP_ID_BYTE0 },
+	{ "chip_id_byte1", WCD934X_CHIP_TIER_CTRL_CHIP_ID_BYTE0 + 1 },
+	{ "chip_id_byte2", WCD934X_CHIP_TIER_CTRL_CHIP_ID_BYTE2 },
+	{ "chip_id_byte3", WCD934X_CHIP_TIER_CTRL_CHIP_ID_BYTE2 + 1 },
+	{ "intr_status0", WCD934X_INTR_PIN1_STATUS0 },
+	{ "intr_status1", WCD934X_INTR_PIN1_STATUS0 + 1 },
+	{ "intr_status2", WCD934X_INTR_PIN1_STATUS0 + 2 },
+	{ "intr_status3", WCD934X_INTR_PIN1_STATUS0 + 3 },
+	{ "intr_mask0", WCD934X_INTR_PIN1_MASK0 },
+	{ "intr_mask1", WCD934X_INTR_PIN1_MASK0 + 1 },
+	{ "intr_mask2", WCD934X_INTR_PIN1_MASK0 + 2 },
+	{ "intr_mask3", WCD934X_INTR_PIN1_MASK0 + 3 },
+	{ "intr_level0", WCD934X_INTR_LEVEL0 },
+	{ "intr_level1", WCD934X_INTR_LEVEL0 + 1 },
+	{ "intr_level2", WCD934X_INTR_LEVEL0 + 2 },
+	{ "intr_level3", WCD934X_INTR_LEVEL0 + 3 },
+	{ "ana_bias", WCD934X_ANA_BIAS },
+	{ "ana_mbhc_mech", WCD934X_ANA_MBHC_MECH },
+	{ "ana_mbhc_elect", WCD934X_ANA_MBHC_ELECT },
+	{ "ana_mbhc_zdet", WCD934X_ANA_MBHC_ZDET },
+	{ "ana_mbhc_result_1", WCD934X_ANA_MBHC_RESULT_1 },
+	{ "ana_mbhc_result_2", WCD934X_ANA_MBHC_RESULT_2 },
+	{ "ana_mbhc_result_3", WCD934X_ANA_MBHC_RESULT_3 },
+	{ "ana_micb2", WCD934X_ANA_MICB2 },
+	{ "mbhc_ctl_clk", WCD934X_MBHC_CTL_CLK },
+	{ "mbhc_ctl_bcs", WCD934X_MBHC_CTL_BCS },
+	{ "mbhc_status_spare_1", WCD934X_MBHC_STATUS_SPARE_1 },
+	{ "mbhc_new_ctl_1", WCD934X_MBHC_NEW_CTL_1 },
+	{ "mbhc_new_ctl_2", WCD934X_MBHC_NEW_CTL_2 },
+	{ "mbhc_new_plug_detect_ctl", WCD934X_MBHC_NEW_PLUG_DETECT_CTL },
+	{ "mbhc_new_zdet_ana_ctl", WCD934X_MBHC_NEW_ZDET_ANA_CTL },
+	{ "mbhc_new_zdet_ramp_ctl", WCD934X_MBHC_NEW_ZDET_RAMP_CTL },
+	{ "mbhc_new_fsm_status", WCD934X_MBHC_NEW_FSM_STATUS },
+	{ "mbhc_new_adc_result", WCD934X_MBHC_NEW_ADC_RESULT },
+};
+
+struct wcd934x_diag_snapshot {
+	int ret[ARRAY_SIZE(wcd934x_diag_regs)];
+	unsigned int val[ARRAY_SIZE(wcd934x_diag_regs)];
+};
+
+static int wcd934x_diag_read_snapshot(struct wcd934x_ddata *ddata,
+				      struct wcd934x_diag_snapshot *snap)
+{
+	int ret = 0;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(wcd934x_diag_regs); i++) {
+		snap->ret[i] = regmap_read(ddata->regmap,
+					   wcd934x_diag_regs[i].reg,
+					   &snap->val[i]);
+		if (snap->ret[i])
+			ret = snap->ret[i];
+	}
+
+	return ret;
+}
+
+static void wcd934x_diag_log_snapshot(struct wcd934x_ddata *ddata,
+				      const char *tag, unsigned int elapsed_ms,
+				      const struct wcd934x_diag_snapshot *snap)
+{
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(wcd934x_diag_regs); i++) {
+		if (snap->ret[i]) {
+			dev_info(ddata->dev, "passive diag %s %ums %s 0x%04x error=%d\n",
+				 tag, elapsed_ms, wcd934x_diag_regs[i].name,
+				 wcd934x_diag_regs[i].reg, snap->ret[i]);
+			continue;
+		}
+
+		dev_info(ddata->dev, "passive diag %s %ums %s 0x%04x=0x%02x\n",
+			 tag, elapsed_ms, wcd934x_diag_regs[i].name,
+			 wcd934x_diag_regs[i].reg, snap->val[i]);
+	}
+}
+
+static bool wcd934x_diag_snapshot_changed(struct wcd934x_ddata *ddata,
+					  unsigned int elapsed_ms,
+					  const struct wcd934x_diag_snapshot *old,
+					  const struct wcd934x_diag_snapshot *new)
+{
+	bool changed = false;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(wcd934x_diag_regs); i++) {
+		if (old->ret[i] == new->ret[i] &&
+		    old->val[i] == new->val[i])
+			continue;
+
+		changed = true;
+
+		if (new->ret[i]) {
+			dev_info(ddata->dev,
+				 "passive diag changed %ums %s 0x%04x error=%d\n",
+				 elapsed_ms, wcd934x_diag_regs[i].name,
+				 wcd934x_diag_regs[i].reg, new->ret[i]);
+			continue;
+		}
+
+		if (old->ret[i]) {
+			dev_info(ddata->dev,
+				 "passive diag changed %ums %s 0x%04x error=%d -> 0x%02x\n",
+				 elapsed_ms, wcd934x_diag_regs[i].name,
+				 wcd934x_diag_regs[i].reg, old->ret[i], new->val[i]);
+			continue;
+		}
+
+		dev_info(ddata->dev,
+			 "passive diag changed %ums %s 0x%04x 0x%02x -> 0x%02x\n",
+			 elapsed_ms, wcd934x_diag_regs[i].name,
+			 wcd934x_diag_regs[i].reg, old->val[i], new->val[i]);
+	}
+
+	return changed;
+}
+
+static ssize_t diag_regs_show(struct device *dev,
+			      struct device_attribute *attr, char *buf)
+{
+	struct wcd934x_ddata *ddata = dev_get_drvdata(dev);
+	unsigned int val;
+	ssize_t len = 0;
+	int ret;
+	int i;
+
+	if (!ddata || !ddata->regmap)
+		return -ENODEV;
+
+	for (i = 0; i < ARRAY_SIZE(wcd934x_diag_regs); i++) {
+		ret = regmap_read(ddata->regmap, wcd934x_diag_regs[i].reg, &val);
+		if (ret) {
+			len += sysfs_emit_at(buf, len, "%-26s 0x%04x error=%d\n",
+					     wcd934x_diag_regs[i].name,
+					     wcd934x_diag_regs[i].reg, ret);
+			continue;
+		}
+
+		len += sysfs_emit_at(buf, len, "%-26s 0x%04x 0x%02x\n",
+				     wcd934x_diag_regs[i].name,
+				     wcd934x_diag_regs[i].reg, val);
+	}
+
+	return len;
+}
+static DEVICE_ATTR_RO(diag_regs);
+
+static ssize_t diag_poll_ms_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct wcd934x_diag_snapshot old, new;
+	struct wcd934x_ddata *ddata = dev_get_drvdata(dev);
+	unsigned int duration_ms;
+	unsigned int elapsed_ms;
+	unsigned int changes = 0;
+	int ret;
+
+	if (!ddata || !ddata->regmap)
+		return -ENODEV;
+
+	ret = kstrtouint(buf, 0, &duration_ms);
+	if (ret)
+		return ret;
+
+	if (!duration_ms || duration_ms > 30000)
+		return -EINVAL;
+
+	dev_info(dev, "passive diag poll start duration=%ums step=20ms\n",
+		 duration_ms);
+
+	wcd934x_diag_read_snapshot(ddata, &old);
+	wcd934x_diag_log_snapshot(ddata, "initial", 0, &old);
+
+	for (elapsed_ms = 20; elapsed_ms <= duration_ms; elapsed_ms += 20) {
+		msleep(20);
+		wcd934x_diag_read_snapshot(ddata, &new);
+		if (wcd934x_diag_snapshot_changed(ddata, elapsed_ms, &old, &new)) {
+			old = new;
+			changes++;
+		}
+	}
+
+	dev_info(dev, "passive diag poll done changes=%u\n", changes);
+
+	return count;
+}
+static DEVICE_ATTR_WO(diag_poll_ms);
+
+static struct attribute *wcd934x_diag_attrs[] = {
+	&dev_attr_diag_regs.attr,
+	&dev_attr_diag_poll_ms.attr,
+	NULL,
+};
+
+static const struct attribute_group wcd934x_diag_attr_group = {
+	.attrs = wcd934x_diag_attrs,
+};
+
 static int wcd934x_bring_up(struct wcd934x_ddata *ddata)
 {
 	struct regmap *regmap = ddata->regmap;
@@ -167,6 +373,15 @@ static int wcd934x_slim_status_up(struct slim_device *sdev)
 		return PTR_ERR(ddata->regmap);
 	}
 
+	if (ddata->passive_diag) {
+		ret = sysfs_create_group(&dev->kobj, &wcd934x_diag_attr_group);
+		if (ret && ret != -EEXIST)
+			return ret;
+
+		dev_info(dev, "Xiaomi passive diagnostic regmap ready; no bring-up, IRQ chip or MFD children\n");
+		return 0;
+	}
+
 	ret = wcd934x_bring_up(ddata);
 	if (ret) {
 		dev_err(dev, "Failed to bring up WCD934X: err = %d\n", ret);
@@ -196,10 +411,17 @@ static int wcd934x_slim_status_up(struct slim_device *sdev)
 static int wcd934x_slim_status(struct slim_device *sdev,
 			       enum slim_device_status status)
 {
+	struct wcd934x_ddata *ddata = dev_get_drvdata(&sdev->dev);
+
 	switch (status) {
 	case SLIM_DEVICE_STATUS_UP:
 		return wcd934x_slim_status_up(sdev);
 	case SLIM_DEVICE_STATUS_DOWN:
+		if (ddata && ddata->passive_diag) {
+			sysfs_remove_group(&sdev->dev.kobj, &wcd934x_diag_attr_group);
+			break;
+		}
+
 		mfd_remove_devices(&sdev->dev);
 		break;
 	default:
@@ -222,6 +444,13 @@ static int wcd934x_slim_probe(struct slim_device *sdev)
 		return	-ENOMEM;
 
 	ddata->dev = dev;
+	ddata->passive_diag = of_property_read_bool(np, "qcom,xiaomi-passive-diag");
+
+	if (ddata->passive_diag) {
+		dev_set_drvdata(dev, ddata);
+		dev_info(dev, "Xiaomi passive diagnostic mode; skipping IRQ, extclk, regulators and reset\n");
+		return 0;
+	}
 
 	ddata->irq = of_irq_get(np, 0);
 	if (ddata->irq < 0)
@@ -275,6 +504,11 @@ err_disable_regulators:
 static void wcd934x_slim_remove(struct slim_device *sdev)
 {
 	struct wcd934x_ddata *ddata = dev_get_drvdata(&sdev->dev);
+
+	if (ddata && ddata->passive_diag) {
+		sysfs_remove_group(&sdev->dev.kobj, &wcd934x_diag_attr_group);
+		return;
+	}
 
 	regulator_bulk_disable(WCD934X_MAX_SUPPLY, ddata->supplies);
 	mfd_remove_devices(&sdev->dev);
