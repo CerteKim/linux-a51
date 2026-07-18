@@ -72,8 +72,7 @@
 			};
 
 			codec {
-				sound-dai = <&left_spkr>, <&right_spkr>,
-					    <&swm 0>, <&wcd9340 0>;
+				sound-dai = <&swm 0>, <&wcd9340 0>;
 			};
 		};
 

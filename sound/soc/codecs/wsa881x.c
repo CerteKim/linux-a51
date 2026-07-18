@@ -1069,10 +1069,11 @@ static int wsa881x_update_status(struct sdw_slave *slave,
 	struct wsa881x_priv *wsa881x = dev_get_drvdata(&slave->dev);
 
 	if (of_machine_is_compatible("xiaomi,book-12.4"))
-		dev_info(&slave->dev,
-			 "Xiaomi WSA status: status=%u dev_num=%u unique=%x gpio=%d\n",
-			 status, slave->dev_num, slave->id.unique_id,
-			 wsa881x->sd_n ? gpiod_get_value_cansleep(wsa881x->sd_n) : -1);
+		dev_info_ratelimited(&slave->dev,
+				     "Xiaomi WSA status: status=%u dev_num=%u unique=%x gpio=%d\n",
+				     status, slave->dev_num,
+				     slave->id.unique_id,
+				     wsa881x->sd_n ? gpiod_get_value_cansleep(wsa881x->sd_n) : -1);
 
 	if (status == SDW_SLAVE_ATTACHED && slave->dev_num > 0)
 		wsa881x_init(wsa881x);
@@ -1204,18 +1205,31 @@ static int wsa881x_runtime_resume(struct device *dev)
 
 	gpiod_direction_output(wsa881x->sd_n, !wsa881x->sd_n_val);
 	if (of_machine_is_compatible("xiaomi,book-12.4"))
-		dev_info(dev,
-			 "Xiaomi WSA runtime resume: status=%u dev_num=%u unique=%x gpio=%d\n",
-			 slave->status, slave->dev_num, slave->id.unique_id,
-			 wsa881x->sd_n ? gpiod_get_value_cansleep(wsa881x->sd_n) : -1);
+		dev_info_ratelimited(dev,
+				     "Xiaomi WSA runtime resume: status=%u dev_num=%u unique=%x gpio=%d\n",
+				     slave->status, slave->dev_num,
+				     slave->id.unique_id,
+				     wsa881x->sd_n ? gpiod_get_value_cansleep(wsa881x->sd_n) : -1);
+
+	if (of_machine_is_compatible("xiaomi,book-12.4") &&
+	    (slave->status == SDW_SLAVE_UNATTACHED || !slave->dev_num)) {
+		dev_err_ratelimited(dev,
+				    "Xiaomi WSA is unattached, skipping runtime resume wait status=%u dev_num=%u unique=%x gpio=%d\n",
+				    slave->status, slave->dev_num,
+				    slave->id.unique_id,
+				    wsa881x->sd_n ? gpiod_get_value_cansleep(wsa881x->sd_n) : -1);
+		gpiod_direction_output(wsa881x->sd_n, wsa881x->sd_n_val);
+		return -ENODEV;
+	}
 
 	time = wait_for_completion_timeout(&slave->initialization_complete,
 					   msecs_to_jiffies(WSA881X_PROBE_TIMEOUT));
 	if (!time) {
-		dev_err(dev,
-			"Initialization not complete, timed out status=%u dev_num=%u unique=%x gpio=%d\n",
-			slave->status, slave->dev_num, slave->id.unique_id,
-			wsa881x->sd_n ? gpiod_get_value_cansleep(wsa881x->sd_n) : -1);
+		dev_err_ratelimited(dev,
+				    "Initialization not complete, timed out status=%u dev_num=%u unique=%x gpio=%d\n",
+				    slave->status, slave->dev_num,
+				    slave->id.unique_id,
+				    wsa881x->sd_n ? gpiod_get_value_cansleep(wsa881x->sd_n) : -1);
 		gpiod_direction_output(wsa881x->sd_n, wsa881x->sd_n_val);
 		return -ETIMEDOUT;
 	}
@@ -1223,9 +1237,10 @@ static int wsa881x_runtime_resume(struct device *dev)
 	regcache_cache_only(regmap, false);
 	regcache_sync(regmap);
 	if (of_machine_is_compatible("xiaomi,book-12.4"))
-		dev_info(dev,
-			 "Xiaomi WSA runtime resume complete: status=%u dev_num=%u unique=%x\n",
-			 slave->status, slave->dev_num, slave->id.unique_id);
+		dev_info_ratelimited(dev,
+				     "Xiaomi WSA runtime resume complete: status=%u dev_num=%u unique=%x\n",
+				     slave->status, slave->dev_num,
+				     slave->id.unique_id);
 
 	return 0;
 }
