@@ -669,6 +669,15 @@
 		mbhc-gpios = <&tlmm 56 GPIO_ACTIVE_HIGH>;
 
 		/*
+		 * Manual WSA speaker-amp diagnostics. Similar WCD9340 designs
+		 * use WCD GPIO1/GPIO2 as WSA881x SD_N lines. Keep the amps out
+		 * of the sound card until these lines are proven to enumerate
+		 * attached SoundWire slaves.
+		 */
+		wsa-sd-n-gpios = <&wcdgpio 1 GPIO_ACTIVE_HIGH>,
+				 <&wcdgpio 2 GPIO_ACTIVE_HIGH>;
+
+		/*
 		 * Manual diagnostics only. These are the PDC-backed parent IRQ
 		 * resources exposed by Windows for QCOM040D/qcgpio. They are
 		 * candidates for locating AUDD GpioInt 0x0100, not production

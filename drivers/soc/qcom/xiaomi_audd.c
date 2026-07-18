@@ -5,9 +5,10 @@
  * Windows exposes \_SB.ADSP.SLM1.ADCM.AUDD on SPI4/CS0 with GPIO resources.
  * The AUDD GpioInt pin 0x0100 is allocated by Windows qcgpio/GPIOClx as
  * ADCM IRQ1055, not as a normal TLMM GPIO interrupt that Linux can map today.
- * This driver intentionally performs no SPI transfers and does not drive any
- * GPIO. It only verifies that the DT node can bind and that the GPIO lines can
- * be requested without changing their direction.
+ * This driver intentionally performs no SPI transfers. It only verifies that
+ * the DT node can bind and that the GPIO lines can be requested. Optional WSA
+ * SD_N GPIOs are exposed through explicit sysfs diagnostics and are never
+ * driven during probe.
  */
 
 #include <linux/device.h>
@@ -27,6 +28,7 @@
 #include <linux/spi/spi.h>
 
 #define XIAOMI_AUDD_MAX_IRQS	8
+#define XIAOMI_AUDD_MAX_WSA_SD_N_GPIOS	2
 
 struct xiaomi_audd_irq {
 	const char *name;
@@ -39,7 +41,10 @@ struct xiaomi_audd {
 	struct gpio_desc *mbhc_gpio;
 	struct xiaomi_audd_irq irqs[XIAOMI_AUDD_MAX_IRQS];
 	unsigned int num_irqs;
+	struct gpio_desc *wsa_sd_n_gpios[XIAOMI_AUDD_MAX_WSA_SD_N_GPIOS];
+	unsigned int num_wsa_sd_n_gpios;
 	struct mutex irq_lock;
+	struct mutex wsa_sd_n_lock;
 	atomic_t irq_count;
 	atomic_t irq_disabled;
 	unsigned long irq_start;
@@ -69,6 +74,37 @@ static void xiaomi_audd_log_gpio(struct device *dev, const char *name,
 		dev_info(dev, "%s gpio requested, read failed: %d\n", name, value);
 	else
 		dev_info(dev, "%s gpio requested, current value=%d\n", name, value);
+}
+
+static int xiaomi_audd_gpio_raw_value(struct gpio_desc *gpiod)
+{
+	if (!gpiod)
+		return -ENOENT;
+
+	return gpiod_get_raw_value_cansleep(gpiod);
+}
+
+static int xiaomi_audd_wsa_sd_n_raw_set(struct xiaomi_audd *audd, int value)
+{
+	struct device *dev = audd->dev;
+	unsigned int i;
+	int ret;
+
+	if (!audd->num_wsa_sd_n_gpios)
+		return -ENOENT;
+
+	for (i = 0; i < audd->num_wsa_sd_n_gpios; i++) {
+		ret = gpiod_direction_output_raw(audd->wsa_sd_n_gpios[i], value);
+		if (ret) {
+			dev_info(dev, "WSA SD_N gpio[%u] raw set %d failed: %d\n",
+				 i, value, ret);
+			return ret;
+		}
+	}
+
+	usleep_range(2000, 3000);
+
+	return 0;
 }
 
 static irqreturn_t xiaomi_audd_irq_handler(int irq, void *data)
@@ -112,6 +148,116 @@ static ssize_t gpio_state_show(struct device *dev,
 	return sysfs_emit(buf, "audd=%d\nmbhc=%d\n", audd_value, mbhc_value);
 }
 static DEVICE_ATTR_RO(gpio_state);
+
+static ssize_t wsa_sd_n_state_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	ssize_t len = 0;
+	unsigned int i;
+
+	if (!audd->num_wsa_sd_n_gpios)
+		return sysfs_emit(buf, "none\n");
+
+	len += sysfs_emit_at(buf, len, "count=%u\n", audd->num_wsa_sd_n_gpios);
+
+	for (i = 0; i < audd->num_wsa_sd_n_gpios; i++)
+		len += sysfs_emit_at(buf, len, "wsa%u raw=%d logical=%d active_low=%d\n",
+				     i,
+				     xiaomi_audd_gpio_raw_value(audd->wsa_sd_n_gpios[i]),
+				     xiaomi_audd_gpio_value(audd->wsa_sd_n_gpios[i]),
+				     gpiod_is_active_low(audd->wsa_sd_n_gpios[i]));
+
+	return len;
+}
+static DEVICE_ATTR_RO(wsa_sd_n_state);
+
+static ssize_t wsa_sd_n_raw_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	unsigned int value;
+	int ret;
+
+	ret = kstrtouint(buf, 0, &value);
+	if (ret)
+		return ret;
+
+	if (value > 1)
+		return -EINVAL;
+
+	mutex_lock(&audd->wsa_sd_n_lock);
+
+	ret = xiaomi_audd_wsa_sd_n_raw_set(audd, value);
+	if (!ret)
+		dev_info(dev, "WSA SD_N raw set to %u\n", value);
+
+	mutex_unlock(&audd->wsa_sd_n_lock);
+
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_WO(wsa_sd_n_raw);
+
+static ssize_t wsa_sd_n_hold_ms_store(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	int previous[XIAOMI_AUDD_MAX_WSA_SD_N_GPIOS];
+	unsigned int duration_ms;
+	unsigned int value;
+	unsigned int i;
+	int ret;
+
+	if (sscanf(buf, "%u %u", &value, &duration_ms) != 2)
+		return -EINVAL;
+
+	if (value > 1 || !duration_ms || duration_ms > 30000)
+		return -EINVAL;
+
+	mutex_lock(&audd->wsa_sd_n_lock);
+
+	if (!audd->num_wsa_sd_n_gpios) {
+		ret = -ENOENT;
+		goto out_unlock;
+	}
+
+	for (i = 0; i < audd->num_wsa_sd_n_gpios; i++) {
+		previous[i] = xiaomi_audd_gpio_raw_value(audd->wsa_sd_n_gpios[i]);
+		if (previous[i] < 0) {
+			ret = previous[i];
+			goto out_unlock;
+		}
+	}
+
+	ret = xiaomi_audd_wsa_sd_n_raw_set(audd, value);
+	if (ret)
+		goto out_unlock;
+
+	dev_info(dev, "WSA SD_N raw holding %u for %u ms\n",
+		 value, duration_ms);
+
+	msleep(duration_ms);
+
+	for (i = 0; i < audd->num_wsa_sd_n_gpios; i++) {
+		ret = gpiod_direction_output_raw(audd->wsa_sd_n_gpios[i],
+						 previous[i]);
+		if (ret) {
+			dev_info(dev, "WSA SD_N gpio[%u] restore raw %d failed: %d\n",
+				 i, previous[i], ret);
+			goto out_unlock;
+		}
+	}
+
+	dev_info(dev, "WSA SD_N raw state restored after hold\n");
+
+out_unlock:
+	mutex_unlock(&audd->wsa_sd_n_lock);
+
+	return ret ? ret : count;
+}
+static DEVICE_ATTR_WO(wsa_sd_n_hold_ms);
 
 static ssize_t gpio_poll_ms_store(struct device *dev,
 				  struct device_attribute *attr,
@@ -258,6 +404,9 @@ static struct attribute *xiaomi_audd_attrs[] = {
 	&dev_attr_gpio_poll_ms.attr,
 	&dev_attr_irq_candidates.attr,
 	&dev_attr_irq_test_ms.attr,
+	&dev_attr_wsa_sd_n_state.attr,
+	&dev_attr_wsa_sd_n_raw.attr,
+	&dev_attr_wsa_sd_n_hold_ms.attr,
 	NULL,
 };
 
@@ -310,6 +459,38 @@ static int xiaomi_audd_collect_irqs(struct spi_device *spi,
 	return 0;
 }
 
+static int xiaomi_audd_collect_wsa_sd_n_gpios(struct device *dev,
+					      struct xiaomi_audd *audd)
+{
+	unsigned int i;
+
+	for (i = 0; i < XIAOMI_AUDD_MAX_WSA_SD_N_GPIOS; i++) {
+		struct gpio_desc *gpiod;
+		int logical;
+		int raw;
+
+		gpiod = devm_gpiod_get_index_optional(dev, "wsa-sd-n", i,
+						      GPIOD_ASIS);
+		if (IS_ERR(gpiod))
+			return PTR_ERR(gpiod);
+		if (!gpiod)
+			break;
+
+		raw = xiaomi_audd_gpio_raw_value(gpiod);
+		logical = xiaomi_audd_gpio_value(gpiod);
+
+		audd->wsa_sd_n_gpios[audd->num_wsa_sd_n_gpios++] = gpiod;
+		dev_info(dev,
+			 "WSA SD_N gpio[%u] requested, raw=%d logical=%d active_low=%d\n",
+			 i, raw, logical, gpiod_is_active_low(gpiod));
+	}
+
+	if (!audd->num_wsa_sd_n_gpios)
+		dev_info(dev, "WSA SD_N gpios not described\n");
+
+	return 0;
+}
+
 static int xiaomi_audd_probe(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
@@ -330,6 +511,7 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 
 	audd->dev = dev;
 	mutex_init(&audd->irq_lock);
+	mutex_init(&audd->wsa_sd_n_lock);
 	dev_set_drvdata(dev, audd);
 
 	ret = xiaomi_audd_collect_irqs(spi, audd);
@@ -352,6 +534,10 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 
 	xiaomi_audd_log_gpio(dev, "audd", audd->audd_gpio);
 	xiaomi_audd_log_gpio(dev, "mbhc", audd->mbhc_gpio);
+
+	ret = xiaomi_audd_collect_wsa_sd_n_gpios(dev, audd);
+	if (ret)
+		return dev_err_probe(dev, ret, "failed to request WSA SD_N gpios\n");
 
 	for_each_available_child_of_node(dev->of_node, child) {
 		const char *hid = NULL;
