@@ -33,8 +33,8 @@
 		audio-routing =
 			"RX_BIAS", "MCLK",
 			"AMIC2", "MIC BIAS2",
-			"Left Spk", "SPK1 OUT",
-			"Right Spk", "SPK2 OUT";
+			"SpkrLeft IN", "SPK1 OUT",
+			"SpkrRight IN", "SPK2 OUT";
 
 		mm1-dai-link {
 			link-name = "MultiMedia1";
@@ -72,7 +72,8 @@
 			};
 
 			codec {
-				sound-dai = <&wcd9340 0>;
+				sound-dai = <&left_spkr>, <&right_spkr>,
+					    <&swm 0>, <&wcd9340 0>;
 			};
 		};
 
@@ -1028,6 +1029,24 @@
 					clock-names = "iface";
 					#address-cells = <2>;
 					#size-cells = <0>;
+
+					left_spkr: speaker@0,3 {
+						compatible = "sdw10217211000";
+						reg = <0 3>;
+						powerdown-gpios = <&wcdgpio 1 GPIO_ACTIVE_LOW>;
+						#thermal-sensor-cells = <0>;
+						sound-name-prefix = "SpkrLeft";
+						#sound-dai-cells = <0>;
+					};
+
+					right_spkr: speaker@0,4 {
+						compatible = "sdw10217211000";
+						reg = <0 4>;
+						powerdown-gpios = <&wcdgpio 2 GPIO_ACTIVE_LOW>;
+						#thermal-sensor-cells = <0>;
+						sound-name-prefix = "SpkrRight";
+						#sound-dai-cells = <0>;
+					};
 				};
 			};
 		};
