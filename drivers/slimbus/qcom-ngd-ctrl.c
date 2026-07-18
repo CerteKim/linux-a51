@@ -1309,14 +1309,20 @@ static void qcom_slim_ngd_master_worker(struct work_struct *work)
 capability_retry:
 	ret = qcom_slim_ngd_xfer_msg(&ctrl->ctrl, &txn);
 	if (!ret) {
-		if (ctrl->state >= QCOM_SLIM_NGD_CTRL_ASLEEP)
+		if (ctrl->state >= QCOM_SLIM_NGD_CTRL_ASLEEP) {
 			complete(&ctrl->reconf);
-		else
+
+			/*
+			 * SAT can arrive before slim_register_controller()
+			 * has registered DT child devices. Retry lookup on
+			 * later SAT messages so those children can get their
+			 * logical addresses once they exist.
+			 */
+			qcom_slim_ngd_notify_slaves(ctrl);
+		} else {
 			dev_err(ctrl->dev, "unexpected state:%d\n",
 						ctrl->state);
-
-		if (ctrl->state == QCOM_SLIM_NGD_CTRL_DOWN)
-			qcom_slim_ngd_notify_slaves(ctrl);
+		}
 
 	} else if (ret == -EIO) {
 		dev_err(ctrl->dev, "capability message NACKed, retrying\n");
@@ -1388,6 +1394,7 @@ static int qcom_slim_ngd_enable(struct qcom_slim_ngd_ctrl *ctrl, bool enable)
 		}
 
 		dev_info(ctrl->dev, "SLIM controller Registered\n");
+		qcom_slim_ngd_notify_slaves(ctrl);
 	} else {
 		qcom_slim_qmi_exit(ctrl);
 		slim_unregister_controller(&ctrl->ctrl);
@@ -1510,7 +1517,8 @@ static void qcom_slim_ngd_up_worker(struct work_struct *work)
 		 ctrl->qmi.svc_info.sq_node, ctrl->qmi.svc_info.sq_port);
 
 	if (ctrl->qmi.handle) {
-		dev_info(ctrl->dev, "NGD already enabled; ignoring duplicate up event\n");
+		dev_info(ctrl->dev, "NGD already enabled; retrying DT child logical-address lookup\n");
+		qcom_slim_ngd_notify_slaves(ctrl);
 		return;
 	}
 
