@@ -58,6 +58,11 @@
 #define WCD934X_MCLK_CLK_12P288MHZ	12288000
 #define WCD934X_MCLK_CLK_9P6MHZ		9600000
 
+static bool wcd934x_trace_xiaomi_book(void)
+{
+	return of_machine_is_compatible("xiaomi,book-12.4");
+}
+
 /* Only valid for 9.6 MHz mclk */
 #define WCD9XXX_DMIC_SAMPLE_RATE_2P4MHZ 2400000
 #define WCD9XXX_DMIC_SAMPLE_RATE_4P8MHZ 4800000
@@ -1875,6 +1880,8 @@ static int wcd934x_trigger(struct snd_pcm_substream *substream, int cmd,
 	struct wcd_slim_codec_dai_data *dai_data;
 	struct wcd934x_codec *wcd;
 	struct slim_stream_config *cfg;
+	bool xiaomi = wcd934x_trace_xiaomi_book();
+	int ret, ret2;
 
 	wcd = snd_soc_component_get_drvdata(dai->component);
 
@@ -1885,14 +1892,52 @@ static int wcd934x_trigger(struct snd_pcm_substream *substream, int cmd,
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
 		cfg = &dai_data->sconfig;
-		slim_stream_prepare(dai_data->sruntime, cfg);
-		slim_stream_enable(dai_data->sruntime);
+		if (xiaomi)
+			dev_info(wcd->dev,
+				 "Xiaomi WCD934x trigger start: dai=%d stream=%d rate=%u bps=%u dir=%u ports=0x%lx channels=%u\n",
+				 dai->id, substream->stream, cfg->rate, cfg->bps,
+				 cfg->direction, cfg->port_mask, cfg->ch_count);
+
+		ret = slim_stream_prepare(dai_data->sruntime, cfg);
+		if (xiaomi)
+			dev_info(wcd->dev,
+				 "Xiaomi WCD934x slim_stream_prepare ret=%d\n",
+				 ret);
+		if (ret)
+			return ret;
+
+		ret = slim_stream_enable(dai_data->sruntime);
+		if (xiaomi)
+			dev_info(wcd->dev,
+				 "Xiaomi WCD934x slim_stream_enable ret=%d\n",
+				 ret);
+		if (ret) {
+			ret2 = slim_stream_unprepare(dai_data->sruntime);
+			if (xiaomi)
+				dev_info(wcd->dev,
+					 "Xiaomi WCD934x slim_stream_unprepare after enable failure ret=%d\n",
+					 ret2);
+			return ret;
+		}
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 	case SNDRV_PCM_TRIGGER_SUSPEND:
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
-		slim_stream_disable(dai_data->sruntime);
-		slim_stream_unprepare(dai_data->sruntime);
+		ret = slim_stream_disable(dai_data->sruntime);
+		if (xiaomi)
+			dev_info(wcd->dev,
+				 "Xiaomi WCD934x slim_stream_disable ret=%d\n",
+				 ret);
+
+		ret2 = slim_stream_unprepare(dai_data->sruntime);
+		if (xiaomi)
+			dev_info(wcd->dev,
+				 "Xiaomi WCD934x slim_stream_unprepare ret=%d\n",
+				 ret2);
+		if (ret)
+			return ret;
+		if (ret2)
+			return ret2;
 		break;
 	default:
 		break;

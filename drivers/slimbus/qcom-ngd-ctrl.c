@@ -87,6 +87,11 @@
 #define SLIM_ROOT_FREQ	24576000
 #define LADDR_RETRY	5
 
+static bool qcom_slim_ngd_trace_xiaomi(void)
+{
+	return of_machine_is_compatible("xiaomi,book-12.4");
+}
+
 /* Per spec.max 40 bytes per received message */
 #define SLIM_MSGQ_BUF_LEN	40
 #define QCOM_SLIM_NGD_DESC_NUM	32
@@ -1022,6 +1027,7 @@ static int qcom_slim_ngd_enable_stream(struct slim_stream_runtime *rt)
 	u8 wbuf[SLIM_MSGQ_BUF_LEN];
 	u8 rbuf[SLIM_MSGQ_BUF_LEN];
 	struct slim_msg_txn txn = {0,};
+	bool xiaomi = qcom_slim_ngd_trace_xiaomi();
 	int i, ret;
 
 	txn.mt = SLIM_MSG_MT_DEST_REFERRED_USER;
@@ -1073,11 +1079,27 @@ static int qcom_slim_ngd_enable_stream(struct slim_stream_runtime *rt)
 			wbuf[txn.msg->num_bytes++] = txn.tid;
 		}
 		wbuf[txn.msg->num_bytes++] = port->ch.id;
+
+		if (xiaomi)
+			dev_info(&sdev->dev,
+				 "Xiaomi NGD stream port[%d]: port=%d ch=0x%02x dir=%d prrate=0x%x state=%d\n",
+				 i, port->id, port->ch.id, port->direction,
+				 port->ch.prrate, port->state);
 	}
 
 	txn.mc = SLIM_USR_MC_DEF_ACT_CHAN;
 	txn.rl = txn.msg->num_bytes + 4;
+
+	if (xiaomi)
+		dev_info(&sdev->dev,
+			 "Xiaomi NGD DEF_ACT_CHAN: laddr=0x%02x valid=%d rate=%u bps=%u dir=%u prot=%u ratem=%u ports=%d len=%u rl=%u payload=%*phN\n",
+			 sdev->laddr, sdev->is_laddr_valid, rt->rate, rt->bps,
+			 rt->direction, rt->prot, rt->ratem, rt->num_ports,
+			 txn.msg->num_bytes, txn.rl, txn.msg->num_bytes, wbuf);
+
 	ret = qcom_slim_ngd_xfer_msg_sync(ctrl, &txn);
+	if (xiaomi)
+		dev_info(&sdev->dev, "Xiaomi NGD DEF_ACT_CHAN ret=%d\n", ret);
 	if (ret) {
 		slim_free_txn_tid(ctrl, &txn);
 		dev_err(&sdev->dev, "TX timed out:MC:0x%x,mt:0x%x", txn.mc,
@@ -1097,7 +1119,15 @@ static int qcom_slim_ngd_enable_stream(struct slim_stream_runtime *rt)
 	}
 
 	wbuf[0] = txn.tid;
+	if (xiaomi)
+		dev_info(&sdev->dev,
+			 "Xiaomi NGD RECONFIG_NOW: laddr=0x%02x len=%u rl=%u payload=%*phN\n",
+			 sdev->laddr, txn.msg->num_bytes, txn.rl,
+			 txn.msg->num_bytes, wbuf);
+
 	ret = qcom_slim_ngd_xfer_msg_sync(ctrl, &txn);
+	if (xiaomi)
+		dev_info(&sdev->dev, "Xiaomi NGD RECONFIG_NOW ret=%d\n", ret);
 	if (ret) {
 		slim_free_txn_tid(ctrl, &txn);
 		dev_err(&sdev->dev, "TX timed out:MC:0x%x,mt:0x%x", txn.mc,
