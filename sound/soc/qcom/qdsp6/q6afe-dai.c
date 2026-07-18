@@ -405,10 +405,21 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
 		q6afe_hdmi_port_prepare(dai_data->port[dai->id],
 					&dai_data->port_config[dai->id].hdmi);
 		break;
-	case SLIMBUS_0_RX ... SLIMBUS_6_TX:
+	case SLIMBUS_0_RX ... SLIMBUS_6_TX: {
+		struct q6afe_slim_cfg *slim =
+			&dai_data->port_config[dai->id].slim;
+
+		dev_info(dai->dev,
+			 "Xiaomi SLIM cfg: dai=%s id=%d rate=%u width=%u channels=%u format=%u map=%*ph\n",
+			 dai->name, dai->id, slim->sample_rate,
+			 slim->bit_width, slim->num_channels,
+			 slim->data_format, AFE_MAX_CHAN_COUNT,
+			 slim->ch_mapping);
+
 		q6afe_slim_port_prepare(dai_data->port[dai->id],
-					&dai_data->port_config[dai->id].slim);
+					slim);
 		break;
+	}
 	case QUINARY_MI2S_RX ... QUINARY_MI2S_TX:
 	case PRIMARY_MI2S_RX ... QUATERNARY_MI2S_TX:
 		rc = q6afe_i2s_port_prepare(dai_data->port[dai->id],
