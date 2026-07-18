@@ -3399,8 +3399,22 @@ static int slim_rx_mux_put(struct snd_kcontrol *kc,
 			list_add_tail(&wcd->rx_chs[port_id].list,
 				      &wcd->dai[aif_id].slim_ch_list);
 		} else {
-			dev_err(wcd->dev ,"SLIM_RX%d PORT is busy\n", port_id);
-			return 0;
+			/*
+			 * Xiaomi Book 12.4 can pre-seed RX0/RX1 before userspace
+			 * selects the DAPM mux.  If the port is already attached
+			 * to the requested AIF, only update the mux state.
+			 */
+			list_for_each_entry(ch, &wcd->dai[aif_id].slim_ch_list, list) {
+				if (ch == &wcd->rx_chs[port_id]) {
+					found = true;
+					break;
+				}
+			}
+
+			if (!found) {
+				dev_err(wcd->dev ,"SLIM_RX%d PORT is busy\n", port_id);
+				return 0;
+			}
 		}
 		break;
 

@@ -32,7 +32,9 @@
 
 		audio-routing =
 			"RX_BIAS", "MCLK",
-			"AMIC2", "MIC BIAS2";
+			"AMIC2", "MIC BIAS2",
+			"Left Spk", "SPK1 OUT",
+			"Right Spk", "SPK2 OUT";
 
 		mm1-dai-link {
 			link-name = "MultiMedia1";
