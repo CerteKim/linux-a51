@@ -631,6 +631,12 @@ static int qcom_swrm_enumerate(struct sdw_bus *bus)
 			qcom_swrm_set_slave_dev_num(bus, NULL, i);
 			sdw_slave_add(bus, &id, NULL);
 		}
+
+		if (of_machine_is_compatible("xiaomi,book-12.4"))
+			dev_info(ctrl->dev,
+				 "Xiaomi SWR enum: dev=%d status=%u mfg=%04x part=%04x class=%02x unique=%x matched=%d raw=%012llx\n",
+				 i, ctrl->status[i], id.mfg_id, id.part_id,
+				 id.class_id, id.unique_id, found, addr);
 	}
 
 	complete(&ctrl->enumeration);
