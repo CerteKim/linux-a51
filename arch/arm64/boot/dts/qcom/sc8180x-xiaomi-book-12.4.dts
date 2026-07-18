@@ -27,7 +27,7 @@
 	};
 
 	sound: sound {
-		compatible = "qcom,sdm845-sndcard";
+		compatible = "xiaomi,book-12.4-sndcard", "qcom,sdm845-sndcard";
 		model = "Xiaomi Book 12.4";
 
 		audio-routing =

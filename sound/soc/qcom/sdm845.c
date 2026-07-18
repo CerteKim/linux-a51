@@ -5,6 +5,7 @@
 
 #include <dt-bindings/sound/qcom,q6afe.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -34,6 +35,7 @@
 struct sdm845_snd_data {
 	struct snd_soc_jack jack;
 	bool jack_setup;
+	bool xiaomi_book_12_4;
 	bool slim_port_setup;
 	bool stream_prepared[AFE_PORT_MAX];
 	struct snd_soc_card *card;
@@ -41,6 +43,15 @@ struct sdm845_snd_data {
 	uint32_t sec_mi2s_clk_count;
 	uint32_t quat_tdm_clk_count;
 	struct sdw_stream_runtime *sruntime[AFE_PORT_MAX];
+};
+
+static const unsigned int sdm845_wcd934x_rx_ch[SLIM_MAX_RX_PORTS] = {
+	144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156
+};
+
+static const unsigned int sdm845_wcd934x_tx_ch[SLIM_MAX_TX_PORTS] = {
+	128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139,
+	140, 141, 142, 143
 };
 
 static struct snd_soc_jack_pin sdm845_jack_pins[] = {
@@ -83,6 +94,30 @@ static int sdm845_slim_snd_hw_params(struct snd_pcm_substream *substream,
 		} else if (ret == -ENOTSUPP) {
 			/* Ignore unsupported */
 			continue;
+		}
+
+		if (pdata->xiaomi_book_12_4) {
+			u32 channels = params_channels(params);
+
+			if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK && !rx_ch_cnt) {
+				rx_ch_cnt = min_t(u32, channels,
+						   ARRAY_SIZE(sdm845_wcd934x_rx_ch));
+				memcpy(rx_ch, sdm845_wcd934x_rx_ch,
+				       rx_ch_cnt * sizeof(*rx_ch));
+				if (rx_ch_cnt)
+					dev_info(rtd->dev,
+						 "Xiaomi Book 12.4: fallback SLIM RX channel map count=%u first=%u\n",
+						 rx_ch_cnt, rx_ch[0]);
+			} else if (substream->stream == SNDRV_PCM_STREAM_CAPTURE && !tx_ch_cnt) {
+				tx_ch_cnt = min_t(u32, channels,
+						   ARRAY_SIZE(sdm845_wcd934x_tx_ch));
+				memcpy(tx_ch, sdm845_wcd934x_tx_ch,
+				       tx_ch_cnt * sizeof(*tx_ch));
+				if (tx_ch_cnt)
+					dev_info(rtd->dev,
+						 "Xiaomi Book 12.4: fallback SLIM TX channel map count=%u first=%u\n",
+						 tx_ch_cnt, tx_ch[0]);
+			}
 		}
 
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
@@ -250,11 +285,6 @@ static int sdm845_dai_init(struct snd_soc_pcm_runtime *rtd)
 	 * TX1, TX2, TX3, TX4, TX5, TX6, TX7, TX8, TX9, TX10, TX11, TX12, TX13
 	 * TX14, TX15, TX16
 	 */
-	unsigned int rx_ch[SLIM_MAX_RX_PORTS] = {144, 145, 146, 147, 148, 149,
-					150, 151, 152, 153, 154, 155, 156};
-	unsigned int tx_ch[SLIM_MAX_TX_PORTS] = {128, 129, 130, 131, 132, 133,
-					    134, 135, 136, 137, 138, 139,
-					    140, 141, 142, 143};
 	int rval, i;
 
 
@@ -303,10 +333,10 @@ static int sdm845_dai_init(struct snd_soc_pcm_runtime *rtd)
 
 		for_each_rtd_codec_dais(rtd, i, codec_dai) {
 			rval = snd_soc_dai_set_channel_map(codec_dai,
-							  ARRAY_SIZE(tx_ch),
-							  tx_ch,
-							  ARRAY_SIZE(rx_ch),
-							  rx_ch);
+							  ARRAY_SIZE(sdm845_wcd934x_tx_ch),
+							  sdm845_wcd934x_tx_ch,
+							  ARRAY_SIZE(sdm845_wcd934x_rx_ch),
+							  sdm845_wcd934x_rx_ch);
 			if (rval != 0 && rval != -ENOTSUPP)
 				return rval;
 
@@ -546,10 +576,21 @@ static int sdm845_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	struct snd_interval *channels = hw_param_interval(params,
 					SNDRV_PCM_HW_PARAM_CHANNELS);
 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
+	struct sdm845_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 
 	rate->min = rate->max = DEFAULT_SAMPLE_RATE_48K;
 	channels->min = channels->max = 2;
-	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
+
+	/*
+	 * Windows SC8180X ACDB declares the built-in speaker topology as
+	 * DeviceID 0x45, 48 kHz, 24-bit.  Keep the generic sdm845 behavior for
+	 * all other devices and backends.
+	 */
+	if (data->xiaomi_book_12_4 && cpu_dai->id == SLIMBUS_0_RX)
+		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S24_LE);
+	else
+		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
 
 	return 0;
 }
@@ -597,6 +638,9 @@ static int sdm845_snd_platform_probe(struct platform_device *pdev)
 	if (!data)
 		return -ENOMEM;
 
+	data->xiaomi_book_12_4 = of_device_is_compatible(dev->of_node,
+							 "xiaomi,book-12.4-sndcard");
+
 	card->driver_name = DRIVER_NAME;
 	card->dapm_widgets = sdm845_snd_widgets;
 	card->num_dapm_widgets = ARRAY_SIZE(sdm845_snd_widgets);
@@ -617,6 +661,7 @@ static int sdm845_snd_platform_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id sdm845_snd_device_id[]  = {
+	{ .compatible = "xiaomi,book-12.4-sndcard" },
 	{ .compatible = "qcom,sdm845-sndcard" },
 	/* Do not grow the list for compatible devices */
 	{ .compatible = "qcom,db845c-sndcard" },
