@@ -581,6 +581,7 @@ static int sdm845_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 
 	rate->min = rate->max = DEFAULT_SAMPLE_RATE_48K;
 	channels->min = channels->max = 2;
+	snd_mask_none(fmt);
 
 	/*
 	 * Windows SC8180X ACDB declares the built-in speaker topology as
