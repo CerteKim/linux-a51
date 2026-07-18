@@ -1705,6 +1705,29 @@ static int wcd934x_slim_set_hw_params(struct wcd934x_codec *wcd,
 	u16 payload = 0;
 	int ret, i;
 
+	if (wcd934x_trace_xiaomi_book() &&
+	    direction == SNDRV_PCM_STREAM_PLAYBACK &&
+	    dai_data == &wcd->dai[AIF1_PB] &&
+	    list_empty(slim_ch_list)) {
+		for (i = 0; i < 2; i++) {
+			if (!wcd->rx_chs[i].ch_num)
+				wcd->rx_chs[i].ch_num = 144 + i;
+
+			if (list_empty(&wcd->rx_chs[i].list)) {
+				list_add_tail(&wcd->rx_chs[i].list, slim_ch_list);
+				dev_info(wcd->dev,
+					 "Xiaomi WCD934x fallback SLIM RX%d: port=%u shift=%u ch=0x%02x\n",
+					 i, wcd->rx_chs[i].port,
+					 wcd->rx_chs[i].shift,
+					 wcd->rx_chs[i].ch_num);
+			} else {
+				dev_warn(wcd->dev,
+					 "Xiaomi WCD934x fallback SLIM RX%d busy\n",
+					 i);
+			}
+		}
+	}
+
 	cfg->ch_count = 0;
 	cfg->direction = direction;
 	cfg->port_mask = 0;
