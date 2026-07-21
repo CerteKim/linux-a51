@@ -24,6 +24,7 @@
 #include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
+#include <linux/pm_runtime.h>
 #include <linux/slab.h>
 #include <linux/spi/spi.h>
 
@@ -39,6 +40,7 @@ struct xiaomi_audd {
 	struct device *dev;
 	struct gpio_desc *audd_gpio;
 	struct gpio_desc *mbhc_gpio;
+	struct device_node *soundwire_np;
 	struct xiaomi_audd_irq irqs[XIAOMI_AUDD_MAX_IRQS];
 	unsigned int num_irqs;
 	struct gpio_desc *wsa_sd_n_gpios[XIAOMI_AUDD_MAX_WSA_SD_N_GPIOS];
@@ -84,7 +86,31 @@ static int xiaomi_audd_gpio_raw_value(struct gpio_desc *gpiod)
 	return gpiod_get_raw_value_cansleep(gpiod);
 }
 
-static int xiaomi_audd_wsa_sd_n_raw_set(struct xiaomi_audd *audd, int value)
+static int xiaomi_audd_wsa_sd_n_raw_set_one(struct xiaomi_audd *audd,
+					    unsigned int index, int value)
+{
+	struct device *dev = audd->dev;
+	int ret;
+
+	if (!audd->num_wsa_sd_n_gpios)
+		return -ENOENT;
+
+	if (index >= audd->num_wsa_sd_n_gpios)
+		return -EINVAL;
+
+	ret = gpiod_direction_output_raw(audd->wsa_sd_n_gpios[index], value);
+	if (ret) {
+		dev_info(dev, "WSA SD_N gpio[%u] raw set %d failed: %d\n",
+			 index, value, ret);
+		return ret;
+	}
+
+	usleep_range(2000, 3000);
+
+	return 0;
+}
+
+static int xiaomi_audd_wsa_sd_n_raw_set_all(struct xiaomi_audd *audd, int value)
 {
 	struct device *dev = audd->dev;
 	unsigned int i;
@@ -105,6 +131,52 @@ static int xiaomi_audd_wsa_sd_n_raw_set(struct xiaomi_audd *audd, int value)
 	usleep_range(2000, 3000);
 
 	return 0;
+}
+
+static void xiaomi_audd_of_node_put(void *data)
+{
+	of_node_put(data);
+}
+
+static struct device *xiaomi_audd_soundwire_get(struct xiaomi_audd *audd)
+{
+	struct platform_device *pdev;
+	struct device *sw_dev;
+	int ret;
+
+	if (!audd->soundwire_np)
+		return NULL;
+
+	pdev = of_find_device_by_node(audd->soundwire_np);
+	if (!pdev) {
+		dev_info(audd->dev, "SoundWire diagnostic target %pOF is not bound\n",
+			 audd->soundwire_np);
+		return ERR_PTR(-ENODEV);
+	}
+
+	sw_dev = &pdev->dev;
+	ret = pm_runtime_resume_and_get(sw_dev);
+	if (ret < 0) {
+		dev_info(audd->dev, "SoundWire diagnostic target %s resume failed: %d\n",
+			 dev_name(sw_dev), ret);
+		put_device(sw_dev);
+		return ERR_PTR(ret);
+	}
+
+	dev_info(audd->dev, "SoundWire diagnostic target %s held active\n",
+		 dev_name(sw_dev));
+
+	return sw_dev;
+}
+
+static void xiaomi_audd_soundwire_put(struct device *sw_dev)
+{
+	if (!sw_dev)
+		return;
+
+	pm_runtime_mark_last_busy(sw_dev);
+	pm_runtime_put_autosuspend(sw_dev);
+	put_device(sw_dev);
 }
 
 static irqreturn_t xiaomi_audd_irq_handler(int irq, void *data)
@@ -160,6 +232,9 @@ static ssize_t wsa_sd_n_state_show(struct device *dev,
 		return sysfs_emit(buf, "none\n");
 
 	len += sysfs_emit_at(buf, len, "count=%u\n", audd->num_wsa_sd_n_gpios);
+	if (audd->soundwire_np)
+		len += sysfs_emit_at(buf, len, "soundwire=%pOF\n",
+				     audd->soundwire_np);
 
 	for (i = 0; i < audd->num_wsa_sd_n_gpios; i++)
 		len += sysfs_emit_at(buf, len, "wsa%u raw=%d logical=%d active_low=%d\n",
@@ -172,26 +247,53 @@ static ssize_t wsa_sd_n_state_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(wsa_sd_n_state);
 
+/*
+ * wsa_sd_n_raw accepts either "<raw>" for all described SD_N lines or
+ * "<index> <raw>" for one line. wsa_sd_n_hold_ms accepts the matching
+ * "<raw> <duration_ms>" and "<index> <raw> <duration_ms>" forms.
+ */
 static ssize_t wsa_sd_n_raw_store(struct device *dev,
 				  struct device_attribute *attr,
 				  const char *buf, size_t count)
 {
 	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	bool set_all;
+	unsigned int arg0;
+	unsigned int arg1;
+	unsigned int index;
 	unsigned int value;
+	char extra;
 	int ret;
+	int fields;
 
-	ret = kstrtouint(buf, 0, &value);
-	if (ret)
-		return ret;
+	fields = sscanf(buf, "%u %u %c", &arg0, &arg1, &extra);
+	if (fields == 1) {
+		set_all = true;
+		value = arg0;
+		index = 0;
+	} else if (fields == 2) {
+		set_all = false;
+		index = arg0;
+		value = arg1;
+	} else {
+		return -EINVAL;
+	}
 
 	if (value > 1)
 		return -EINVAL;
 
 	mutex_lock(&audd->wsa_sd_n_lock);
 
-	ret = xiaomi_audd_wsa_sd_n_raw_set(audd, value);
-	if (!ret)
-		dev_info(dev, "WSA SD_N raw set to %u\n", value);
+	if (set_all) {
+		ret = xiaomi_audd_wsa_sd_n_raw_set_all(audd, value);
+		if (!ret)
+			dev_info(dev, "WSA SD_N raw set all to %u\n", value);
+	} else {
+		ret = xiaomi_audd_wsa_sd_n_raw_set_one(audd, index, value);
+		if (!ret)
+			dev_info(dev, "WSA SD_N gpio[%u] raw set to %u\n",
+				 index, value);
+	}
 
 	mutex_unlock(&audd->wsa_sd_n_lock);
 
@@ -204,14 +306,34 @@ static ssize_t wsa_sd_n_hold_ms_store(struct device *dev,
 				      const char *buf, size_t count)
 {
 	struct xiaomi_audd *audd = dev_get_drvdata(dev);
+	struct device *sw_dev = NULL;
 	int previous[XIAOMI_AUDD_MAX_WSA_SD_N_GPIOS];
+	bool set_all;
+	unsigned int arg0;
+	unsigned int arg1;
+	unsigned int arg2;
 	unsigned int duration_ms;
+	unsigned int index;
 	unsigned int value;
 	unsigned int i;
+	char extra;
 	int ret;
+	int fields;
 
-	if (sscanf(buf, "%u %u", &value, &duration_ms) != 2)
+	fields = sscanf(buf, "%u %u %u %c", &arg0, &arg1, &arg2, &extra);
+	if (fields == 2) {
+		set_all = true;
+		value = arg0;
+		duration_ms = arg1;
+		index = 0;
+	} else if (fields == 3) {
+		set_all = false;
+		index = arg0;
+		value = arg1;
+		duration_ms = arg2;
+	} else {
 		return -EINVAL;
+	}
 
 	if (value > 1 || !duration_ms || duration_ms > 30000)
 		return -EINVAL;
@@ -223,6 +345,11 @@ static ssize_t wsa_sd_n_hold_ms_store(struct device *dev,
 		goto out_unlock;
 	}
 
+	if (!set_all && index >= audd->num_wsa_sd_n_gpios) {
+		ret = -EINVAL;
+		goto out_unlock;
+	}
+
 	for (i = 0; i < audd->num_wsa_sd_n_gpios; i++) {
 		previous[i] = xiaomi_audd_gpio_raw_value(audd->wsa_sd_n_gpios[i]);
 		if (previous[i] < 0) {
@@ -231,27 +358,47 @@ static ssize_t wsa_sd_n_hold_ms_store(struct device *dev,
 		}
 	}
 
-	ret = xiaomi_audd_wsa_sd_n_raw_set(audd, value);
-	if (ret)
+	sw_dev = xiaomi_audd_soundwire_get(audd);
+	if (IS_ERR(sw_dev)) {
+		ret = PTR_ERR(sw_dev);
 		goto out_unlock;
+	}
 
-	dev_info(dev, "WSA SD_N raw holding %u for %u ms\n",
-		 value, duration_ms);
+	if (set_all) {
+		ret = xiaomi_audd_wsa_sd_n_raw_set_all(audd, value);
+		if (ret)
+			goto out_put_soundwire;
+
+		dev_info(dev, "WSA SD_N raw holding all at %u for %u ms\n",
+			 value, duration_ms);
+	} else {
+		ret = xiaomi_audd_wsa_sd_n_raw_set_one(audd, index, value);
+		if (ret)
+			goto out_put_soundwire;
+
+		dev_info(dev, "WSA SD_N gpio[%u] raw holding %u for %u ms\n",
+			 index, value, duration_ms);
+	}
 
 	msleep(duration_ms);
 
 	for (i = 0; i < audd->num_wsa_sd_n_gpios; i++) {
+		if (!set_all && i != index)
+			continue;
+
 		ret = gpiod_direction_output_raw(audd->wsa_sd_n_gpios[i],
 						 previous[i]);
 		if (ret) {
 			dev_info(dev, "WSA SD_N gpio[%u] restore raw %d failed: %d\n",
 				 i, previous[i], ret);
-			goto out_unlock;
+			goto out_put_soundwire;
 		}
 	}
 
 	dev_info(dev, "WSA SD_N raw state restored after hold\n");
 
+out_put_soundwire:
+	xiaomi_audd_soundwire_put(sw_dev);
 out_unlock:
 	mutex_unlock(&audd->wsa_sd_n_lock);
 
@@ -513,6 +660,19 @@ static int xiaomi_audd_probe(struct spi_device *spi)
 	mutex_init(&audd->irq_lock);
 	mutex_init(&audd->wsa_sd_n_lock);
 	dev_set_drvdata(dev, audd);
+
+	audd->soundwire_np = of_parse_phandle(dev->of_node, "qcom,soundwire", 0);
+	if (audd->soundwire_np) {
+		ret = devm_add_action_or_reset(dev, xiaomi_audd_of_node_put,
+					       audd->soundwire_np);
+		if (ret)
+			return ret;
+
+		dev_info(dev, "SoundWire diagnostic target %pOF\n",
+			 audd->soundwire_np);
+	} else {
+		dev_info(dev, "SoundWire diagnostic target not described\n");
+	}
 
 	ret = xiaomi_audd_collect_irqs(spi, audd);
 	if (ret)

@@ -667,11 +667,14 @@
 		pinctrl-names = "default";
 
 		mbhc-gpios = <&tlmm 56 GPIO_ACTIVE_HIGH>;
+		qcom,soundwire = <&swm>;
 
 		/*
 		 * Manual WSA speaker-amp diagnostics. Similar WCD9340 designs
-		 * use WCD GPIO1/GPIO2 as WSA881x SD_N lines. Keep the amps out
-		 * of the sound card until these lines are proven to enumerate
+		 * use WCD GPIO1/GPIO2 as WSA881x SD_N lines. Windows persisted
+		 * speaker-protection sinks 0x01010005 and 0x01010004, matching
+		 * the last tested SoundWire unique IDs 5 and 4. Keep the amps
+		 * out of the sound card until these lines are proven to enumerate
 		 * attached SoundWire slaves.
 		 */
 		wsa-sd-n-gpios = <&wcdgpio 1 GPIO_ACTIVE_HIGH>,

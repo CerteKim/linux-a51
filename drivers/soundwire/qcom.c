@@ -564,6 +564,31 @@ static void qcom_swrm_get_device_status(struct qcom_swrm_ctrl *ctrl)
 	}
 }
 
+static void qcom_swrm_xiaomi_log_state(struct qcom_swrm_ctrl *ctrl,
+				       const char *tag)
+{
+	u32 comp_status = 0;
+	u32 cpu_en = 0;
+	u32 intr_status = 0;
+	u32 slave_status = 0;
+
+	if (!of_machine_is_compatible("xiaomi,book-12.4"))
+		return;
+
+	ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_FRAME_GEN_ENABLED],
+		       &comp_status);
+	ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &slave_status);
+	ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_STATUS],
+		       &intr_status);
+	ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_CPU_EN],
+		       &cpu_en);
+
+	dev_info(ctrl->dev,
+		 "Xiaomi SWR %s: version=0x%08x frame=0x%08x mcp_slv_status=0x%08x irq_status=0x%08x cpu_en=0x%08x clock_stop_not_supported=%d\n",
+		 tag, ctrl->version, comp_status, slave_status, intr_status,
+		 cpu_en, ctrl->clock_stop_not_supported);
+}
+
 static void qcom_swrm_set_slave_dev_num(struct sdw_bus *bus,
 					struct sdw_slave *slave, int devnum)
 {
@@ -593,6 +618,11 @@ static int qcom_swrm_enumerate(struct sdw_bus *bus)
 	u64 addr;
 	int i;
 	char *buf1 = (char *)&val1, *buf2 = (char *)&val2;
+
+	if (of_machine_is_compatible("xiaomi,book-12.4"))
+		dev_info_ratelimited(ctrl->dev,
+				     "Xiaomi SWR enumerate: mcp_slv_status=0x%08x\n",
+				     ctrl->slave_status);
 
 	for (i = 1; i <= SDW_MAX_DEVICES; i++) {
 		/* do not continue if the status is Not Present  */
@@ -681,6 +711,12 @@ static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
 	ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_STATUS],
 		       &intr_sts);
 	intr_sts_masked = intr_sts & ctrl->intr_mask;
+
+	if (of_machine_is_compatible("xiaomi,book-12.4"))
+		dev_info_ratelimited(ctrl->dev,
+				     "Xiaomi SWR irq: status=0x%08x masked=0x%08x mask=0x%08x cached_slv_status=0x%08x\n",
+				     intr_sts, intr_sts_masked, ctrl->intr_mask,
+				     ctrl->slave_status);
 
 	do {
 		for (i = 0; i < SWRM_INTERRUPT_MAX; i++) {
@@ -907,6 +943,7 @@ static int qcom_swrm_init(struct qcom_swrm_ctrl *ctrl)
 	ctrl->reg_read(ctrl, SWRM_COMP_PARAMS, &val);
 	ctrl->rd_fifo_depth = FIELD_GET(SWRM_COMP_PARAMS_RD_FIFO_DEPTH, val);
 	ctrl->wr_fifo_depth = FIELD_GET(SWRM_COMP_PARAMS_WR_FIFO_DEPTH, val);
+	qcom_swrm_xiaomi_log_state(ctrl, "init");
 
 	return 0;
 }
@@ -1721,6 +1758,8 @@ static int __maybe_unused swrm_runtime_resume(struct device *dev)
 		if (ret < 0)
 			dev_err(ctrl->dev, "bus failed to exit clock stop %d\n", ret);
 	}
+
+	qcom_swrm_xiaomi_log_state(ctrl, "runtime-resume");
 
 	return 0;
 }

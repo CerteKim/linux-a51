@@ -7,6 +7,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/device.h>
+#include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <sound/pcm.h>
@@ -409,12 +410,13 @@ static int q6afe_dai_prepare(struct snd_pcm_substream *substream,
 		struct q6afe_slim_cfg *slim =
 			&dai_data->port_config[dai->id].slim;
 
-		dev_info(dai->dev,
-			 "Xiaomi SLIM cfg: dai=%s id=%d rate=%u width=%u channels=%u format=%u map=%*ph\n",
-			 dai->name, dai->id, slim->sample_rate,
-			 slim->bit_width, slim->num_channels,
-			 slim->data_format, AFE_MAX_CHAN_COUNT,
-			 slim->ch_mapping);
+		if (of_machine_is_compatible("xiaomi,book-12.4"))
+			dev_info(dai->dev,
+				 "Xiaomi SLIM cfg: dai=%s id=%d rate=%u width=%u channels=%u format=%u map=%*ph\n",
+				 dai->name, dai->id, slim->sample_rate,
+				 slim->bit_width, slim->num_channels,
+				 slim->data_format, AFE_MAX_CHAN_COUNT,
+				 slim->ch_mapping);
 
 		q6afe_slim_port_prepare(dai_data->port[dai->id],
 					slim);
