@@ -1040,6 +1040,20 @@
 					clock-names = "iface";
 					#address-cells = <2>;
 					#size-cells = <0>;
+
+					/*
+					 * Observed after asserting WCD GPIO1/2 and
+					 * forcing SWR reinit:
+					 * sdw:0:0:0217:2110:00:4
+					 */
+					right_spkr: speaker@0,4 {
+						compatible = "sdw10217211000";
+						reg = <0 4>;
+						powerdown-gpios = <&wcdgpio 2 GPIO_ACTIVE_LOW>;
+						#thermal-sensor-cells = <0>;
+						sound-name-prefix = "SpkrRight";
+						#sound-dai-cells = <0>;
+					};
 				};
 			};
 		};

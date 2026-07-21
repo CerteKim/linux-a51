@@ -624,7 +624,8 @@ static int xiaomi_audd_collect_wsa_sd_n_gpios(struct device *dev,
 		int raw;
 
 		gpiod = devm_gpiod_get_index_optional(dev, "wsa-sd-n", i,
-						      GPIOD_ASIS);
+						      GPIOD_ASIS |
+						      GPIOD_FLAGS_BIT_NONEXCLUSIVE);
 		if (IS_ERR(gpiod))
 			return PTR_ERR(gpiod);
 		if (!gpiod)
