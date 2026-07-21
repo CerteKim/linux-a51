@@ -1700,6 +1700,7 @@ static void qcom_swrm_remove(struct platform_device *pdev)
 static int __maybe_unused swrm_runtime_resume(struct device *dev)
 {
 	struct qcom_swrm_ctrl *ctrl = dev_get_drvdata(dev);
+	bool xiaomi_book = of_machine_is_compatible("xiaomi,book-12.4");
 	int ret;
 
 	if (ctrl->wake_irq > 0) {
@@ -1709,7 +1710,11 @@ static int __maybe_unused swrm_runtime_resume(struct device *dev)
 
 	clk_prepare_enable(ctrl->hclk);
 
-	if (ctrl->clock_stop_not_supported) {
+	if (ctrl->clock_stop_not_supported || xiaomi_book) {
+		if (xiaomi_book && !ctrl->clock_stop_not_supported)
+			dev_info(ctrl->dev,
+				 "Xiaomi SWR runtime-resume: forcing full reinit\n");
+
 		reinit_completion(&ctrl->enumeration);
 		ctrl->reg_write(ctrl, SWRM_COMP_SW_RESET, 0x01);
 		usleep_range(100, 105);
@@ -1724,6 +1729,8 @@ static int __maybe_unused swrm_runtime_resume(struct device *dev)
 		wait_for_completion_timeout(&ctrl->enumeration,
 					    msecs_to_jiffies(TIMEOUT_MS));
 		qcom_swrm_get_device_status(ctrl);
+		if (xiaomi_book && ctrl->slave_status)
+			qcom_swrm_enumerate(&ctrl->bus);
 		sdw_handle_slave_status(&ctrl->bus, ctrl->status);
 	} else {
 		reset_control_reset(ctrl->audio_cgcr);

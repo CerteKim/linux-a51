@@ -171,7 +171,7 @@ static struct device *xiaomi_audd_soundwire_get(struct xiaomi_audd *audd)
 
 static void xiaomi_audd_soundwire_put(struct device *sw_dev)
 {
-	if (!sw_dev)
+	if (!sw_dev || IS_ERR(sw_dev))
 		return;
 
 	pm_runtime_mark_last_busy(sw_dev);
@@ -358,30 +358,31 @@ static ssize_t wsa_sd_n_hold_ms_store(struct device *dev,
 		}
 	}
 
-	sw_dev = xiaomi_audd_soundwire_get(audd);
-	if (IS_ERR(sw_dev)) {
-		ret = PTR_ERR(sw_dev);
-		goto out_unlock;
-	}
-
 	if (set_all) {
 		ret = xiaomi_audd_wsa_sd_n_raw_set_all(audd, value);
 		if (ret)
-			goto out_put_soundwire;
+			goto out_unlock;
 
 		dev_info(dev, "WSA SD_N raw holding all at %u for %u ms\n",
 			 value, duration_ms);
 	} else {
 		ret = xiaomi_audd_wsa_sd_n_raw_set_one(audd, index, value);
 		if (ret)
-			goto out_put_soundwire;
+			goto out_unlock;
 
 		dev_info(dev, "WSA SD_N gpio[%u] raw holding %u for %u ms\n",
 			 index, value, duration_ms);
 	}
 
+	sw_dev = xiaomi_audd_soundwire_get(audd);
+	if (IS_ERR(sw_dev)) {
+		ret = PTR_ERR(sw_dev);
+		goto out_restore;
+	}
+
 	msleep(duration_ms);
 
+out_restore:
 	for (i = 0; i < audd->num_wsa_sd_n_gpios; i++) {
 		if (!set_all && i != index)
 			continue;
