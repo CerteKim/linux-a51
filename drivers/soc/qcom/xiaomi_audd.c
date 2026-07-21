@@ -359,6 +359,9 @@ static ssize_t wsa_sd_n_hold_ms_store(struct device *dev,
 	}
 
 	if (set_all) {
+		dev_info(dev, "WSA SD_N raw asserting all to %u before SoundWire resume\n",
+			 value);
+
 		ret = xiaomi_audd_wsa_sd_n_raw_set_all(audd, value);
 		if (ret)
 			goto out_unlock;
@@ -366,6 +369,9 @@ static ssize_t wsa_sd_n_hold_ms_store(struct device *dev,
 		dev_info(dev, "WSA SD_N raw holding all at %u for %u ms\n",
 			 value, duration_ms);
 	} else {
+		dev_info(dev, "WSA SD_N gpio[%u] raw asserting %u before SoundWire resume\n",
+			 index, value);
+
 		ret = xiaomi_audd_wsa_sd_n_raw_set_one(audd, index, value);
 		if (ret)
 			goto out_unlock;

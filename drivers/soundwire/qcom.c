@@ -5,6 +5,7 @@
 #include <linux/completion.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/debugfs.h>
@@ -212,6 +213,9 @@ struct qcom_swrm_ctrl {
 	u32 rd_fifo_depth;
 	bool clock_stop_not_supported;
 };
+
+static int qcom_swrm_enumerate(struct sdw_bus *bus);
+static int qcom_swrm_init(struct qcom_swrm_ctrl *ctrl);
 
 struct qcom_swrm_data {
 	u32 default_cols;
@@ -588,6 +592,122 @@ static void qcom_swrm_xiaomi_log_state(struct qcom_swrm_ctrl *ctrl,
 		 tag, ctrl->version, comp_status, slave_status, intr_status,
 		 cpu_en, ctrl->clock_stop_not_supported);
 }
+
+static void qcom_swrm_xiaomi_poll(struct qcom_swrm_ctrl *ctrl,
+				  const char *tag, unsigned int duration_ms,
+				  unsigned int interval_ms)
+{
+	unsigned long end = jiffies + msecs_to_jiffies(duration_ms);
+	unsigned int sample = 0;
+	char sample_tag[48];
+
+	do {
+		qcom_swrm_get_device_status(ctrl);
+		snprintf(sample_tag, sizeof(sample_tag), "%s-%u", tag, sample++);
+		qcom_swrm_xiaomi_log_state(ctrl, sample_tag);
+
+		if (ctrl->slave_status) {
+			qcom_swrm_enumerate(&ctrl->bus);
+			sdw_handle_slave_status(&ctrl->bus, ctrl->status);
+		}
+
+		if (!duration_ms || time_after_eq(jiffies, end))
+			break;
+
+		msleep(interval_ms);
+	} while (time_before(jiffies, end));
+}
+
+static ssize_t xiaomi_swr_poll_ms_store(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t count)
+{
+	struct qcom_swrm_ctrl *ctrl = dev_get_drvdata(dev);
+	unsigned int duration_ms;
+	unsigned int interval_ms = 100;
+	char extra;
+	int fields;
+	int ret;
+
+	fields = sscanf(buf, "%u %u %c", &duration_ms, &interval_ms, &extra);
+	if (fields < 1 || fields > 2)
+		return -EINVAL;
+
+	if (!duration_ms || duration_ms > 30000 || !interval_ms ||
+	    interval_ms > duration_ms)
+		return -EINVAL;
+
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret < 0) {
+		dev_info(dev, "Xiaomi SWR manual poll resume failed: %d\n", ret);
+		return ret;
+	}
+
+	dev_info(dev, "Xiaomi SWR manual poll start duration=%u interval=%u\n",
+		 duration_ms, interval_ms);
+	qcom_swrm_xiaomi_poll(ctrl, "manual-poll", duration_ms, interval_ms);
+	dev_info(dev, "Xiaomi SWR manual poll done\n");
+
+	pm_runtime_mark_last_busy(dev);
+	pm_runtime_put_autosuspend(dev);
+
+	return count;
+}
+static DEVICE_ATTR_WO(xiaomi_swr_poll_ms);
+
+static ssize_t xiaomi_swr_reinit_ms_store(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf, size_t count)
+{
+	struct qcom_swrm_ctrl *ctrl = dev_get_drvdata(dev);
+	unsigned int duration_ms;
+	unsigned int interval_ms = 100;
+	char extra;
+	int fields;
+	int ret;
+
+	fields = sscanf(buf, "%u %u %c", &duration_ms, &interval_ms, &extra);
+	if (fields < 1 || fields > 2)
+		return -EINVAL;
+
+	if (!duration_ms || duration_ms > 30000 || !interval_ms ||
+	    interval_ms > duration_ms)
+		return -EINVAL;
+
+	ret = pm_runtime_resume_and_get(dev);
+	if (ret < 0) {
+		dev_info(dev, "Xiaomi SWR manual reinit resume failed: %d\n", ret);
+		return ret;
+	}
+
+	dev_info(dev, "Xiaomi SWR manual reinit start duration=%u interval=%u\n",
+		 duration_ms, interval_ms);
+
+	reinit_completion(&ctrl->enumeration);
+	ctrl->reg_write(ctrl, SWRM_COMP_SW_RESET, 0x01);
+	usleep_range(100, 105);
+	qcom_swrm_init(ctrl);
+	wait_for_completion_timeout(&ctrl->enumeration,
+				    msecs_to_jiffies(TIMEOUT_MS));
+	qcom_swrm_xiaomi_poll(ctrl, "manual-reinit", duration_ms, interval_ms);
+	dev_info(dev, "Xiaomi SWR manual reinit done\n");
+
+	pm_runtime_mark_last_busy(dev);
+	pm_runtime_put_autosuspend(dev);
+
+	return count;
+}
+static DEVICE_ATTR_WO(xiaomi_swr_reinit_ms);
+
+static struct attribute *qcom_swrm_xiaomi_attrs[] = {
+	&dev_attr_xiaomi_swr_poll_ms.attr,
+	&dev_attr_xiaomi_swr_reinit_ms.attr,
+	NULL,
+};
+
+static const struct attribute_group qcom_swrm_xiaomi_group = {
+	.attrs = qcom_swrm_xiaomi_attrs,
+};
 
 static void qcom_swrm_set_slave_dev_num(struct sdw_bus *bus,
 					struct sdw_slave *slave, int devnum)
@@ -1672,6 +1792,13 @@ static int qcom_swrm_probe(struct platform_device *pdev)
 	pm_runtime_mark_last_busy(dev);
 	pm_runtime_set_active(dev);
 	pm_runtime_enable(dev);
+
+	if (of_machine_is_compatible("xiaomi,book-12.4")) {
+		ret = devm_device_add_group(dev, &qcom_swrm_xiaomi_group);
+		if (ret)
+			dev_warn(dev, "failed to add Xiaomi SWR diagnostics: %d\n",
+				 ret);
+	}
 
 #ifdef CONFIG_DEBUG_FS
 	ctrl->debugfs = debugfs_create_dir("qualcomm-sdw", ctrl->bus.debugfs);
