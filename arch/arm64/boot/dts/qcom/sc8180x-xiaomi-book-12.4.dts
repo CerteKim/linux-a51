@@ -713,8 +713,13 @@
 	 */
 	assigned-clock-parents = <&mdss_dsi0_phy 0>, <&mdss_dsi0_phy 1>;
 
+	/*
+	 * Graph anchor for the second link only.  It deliberately has no
+	 * compatible: the panel driver registers its own secondary DSI device,
+	 * and a compatible here would make the DSI host create one first and
+	 * collide with it (-EEXIST).
+	 */
 	panel_secondary: panel@0 {
-		compatible = "csot,pnc357db1-4";
 		reg = <0>;
 	};
 };
