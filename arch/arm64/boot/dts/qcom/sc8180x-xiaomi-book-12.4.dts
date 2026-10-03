@@ -273,6 +273,11 @@
 			no-map;
 		};
 
+		slpi_mem: slpi-region@92c00000 {
+			reg = <0x0 0x92c00000 0x0 0x1400000>;
+			no-map;
+		};
+
 		gpu_mem: gpu-region@94000000 {
 			reg = <0x0 0x94000000 0x0 0x5000>;
 			no-map;
@@ -833,6 +838,18 @@
 &remoteproc_cdsp {
 	memory-region = <&cdsp_mem>;
 	firmware-name = "qcom/XIAOMI/BOOK124/qccdsp8180.mbn";
+
+	status = "okay";
+};
+
+/*
+ * SLPI / SPSS.  This is where the Qualcomm Sensor Core runs, so it is what
+ * makes the accelerometer (and auto-rotate) available: with it up, the SSC's
+ * QMI service appears on QRTR and libssc + iio-sensor-proxy can drive it.
+ */
+&remoteproc_slpi {
+	memory-region = <&slpi_mem>;
+	firmware-name = "qcom/XIAOMI/BOOK124/qcslpi8180.mbn";
 
 	status = "okay";
 };
