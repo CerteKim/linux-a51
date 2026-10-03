@@ -659,7 +659,6 @@
 	panel@0 {
 		compatible = "csot,pnc357db1-4";
 		reg = <0>;
-		link2 = <&panel_secondary>;
 		vddi-supply = <&vreg_l12a_1p8>;
 		vdd1-supply = <&vreg_l1c_1p8>;
 		vdd-supply = <&vreg_l12a_1p8>;
@@ -679,14 +678,6 @@
 					remote-endpoint = <&mdss_dsi0_out>;
 				};
 			};
-
-			port@1 {
-				reg = <1>;
-
-				panel_in1: endpoint {
-					remote-endpoint = <&mdss_dsi1_out>;
-				};
-			};
 		};
 	};
 };
@@ -701,38 +692,6 @@
 	vdds-supply = <&vreg_l5e_0p88>;
 };
 
-&mdss_dsi1 {
-	status = "okay";
-	vdda-supply = <&vreg_l3c_1p2>;
-	refgen-supply = <&refgen>;
-	qcom,dual-dsi-mode;
-	qcom,sync-dual-dsi;
-	/*
-	 * Both PHYs are driven from the DSI0 PLL, as the slave link has to
-	 * use the same byte/pixel clock as the master.
-	 */
-	assigned-clock-parents = <&mdss_dsi0_phy 0>, <&mdss_dsi0_phy 1>;
-
-	/*
-	 * Graph anchor for the second link only.  It deliberately has no
-	 * compatible: the panel driver registers its own secondary DSI device,
-	 * and a compatible here would make the DSI host create one first and
-	 * collide with it (-EEXIST).
-	 */
-	panel_secondary: panel@0 {
-		reg = <0>;
-	};
-};
-
-&mdss_dsi1_out {
-	data-lanes = <0 1 2 3>;
-	remote-endpoint = <&panel_in1>;
-};
-
-&mdss_dsi1_phy {
-	status = "okay";
-	vdds-supply = <&vreg_l5e_0p88>;
-};
 
 // Device don't support eDP
 &edp_phy {
