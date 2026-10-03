@@ -78,9 +78,6 @@ struct panel_desc {
 	bool is_dual_dsi;
 	bool has_dcs_backlight;
 	bool needs_display_on;
-
-	/* used when the device tree exposes no second link */
-	const struct panel_desc *single_link_desc;
 };
 
 static const struct regulator_bulk_data himax_supplies[] = {
@@ -617,11 +614,11 @@ static struct drm_dsc_config ppc357db1_4_dsc_cfg = {
 };
 
 /*
- * Single-link variant for the Xiaomi Book S 12.4: all 1600 pixels travel on
- * DSI0, so the whole line is one DSC slice.  These are the parameters the
- * panel was verified with.
+ * CSOT PNC357DB1-4 of the Xiaomi Book S 12.4: all 1600 pixels travel on DSI0,
+ * so the whole line is one DSC slice.  These are the parameters the panel was
+ * verified with; an 800-wide per-link slice renders garbage.
  */
-static struct drm_dsc_config pnc357db1_4_dsc_cfg_single = {
+static struct drm_dsc_config pnc357db1_4_dsc_cfg = {
 	.dsc_version_major = 1,
 	.dsc_version_minor = 1,
 	.slice_height = 40,
@@ -632,7 +629,7 @@ static struct drm_dsc_config pnc357db1_4_dsc_cfg_single = {
 	.block_pred_enable = true,
 };
 
-static const struct drm_display_mode pnc357db1_4_dsc_modes_single[] = {
+static const struct drm_display_mode pnc357db1_4_dsc_modes[] = {
 	{
 		.clock = (1600 + 60 + 20 + 40) * (2560 + 112 + 4 + 18) * 60 / 1000,
 		.hdisplay = 1600,
@@ -721,26 +718,6 @@ static int himax_probe(struct mipi_dsi_device *dsi)
 	if (IS_ERR(ctx->enable_gpio))
 		return dev_err_probe(dev, PTR_ERR(ctx->enable_gpio),
 				     "Failed to get enable-gpios\n");
-
-	if (desc->is_dual_dsi) {
-		struct device_node *port, *ep;
-
-		port = of_graph_get_port_by_id(dsi->dev.of_node, 1);
-		ep = port ? of_get_child_by_name(port, "endpoint") : NULL;
-		of_node_put(port);
-
-		if (!ep) {
-			/*
-			 * No second link in this DT: fall back to the single-link
-			 * variant of the panel instead of failing to probe.
-			 */
-			ctx->desc = desc->single_link_desc;
-			ctx->dsc = *ctx->desc->dsc_cfg;
-			desc = ctx->desc;
-			dev_info(dev, "no secondary link, using single-link configuration\n");
-		}
-		of_node_put(ep);
-	}
 
 	if (desc->is_dual_dsi) {
 		num_dsi = 2;
@@ -892,8 +869,13 @@ static int pnc357db1_4_init_seq(struct mipi_dsi_multi_context *dsi_ctx)
 	return csot_ppc357db1_4_init_seq(dsi_ctx);
 }
 
-/* Same panel driven from DSI0 only, all 1600 pixels in one DSC slice. */
-static const struct panel_desc csot_pnc357db1_4_single_desc = {
+/*
+ * The panel on the Xiaomi Book S 12.4 is driven from DSI0 only, with all 1600
+ * pixels in one DSC slice: that is the geometry its ACPI configuration uses
+ * and the only one it decodes correctly.  800-wide per-link slices leave the
+ * image garbled, so there is no dual-DSI variant of this descriptor.
+ */
+static const struct panel_desc csot_pnc357db1_4_desc = {
 	.width_mm = 265,
 	.height_mm = 166,
 	.lanes = 4,
@@ -901,36 +883,15 @@ static const struct panel_desc csot_pnc357db1_4_single_desc = {
 	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_SYNC_PULSE,
 	.supplies = pnc357db1_4_supplies,
 	.num_supplies = ARRAY_SIZE(pnc357db1_4_supplies),
-	.dsc_cfg = &pnc357db1_4_dsc_cfg_single,
-	.dsc_modes = pnc357db1_4_dsc_modes_single,
-	.num_dsc_modes = ARRAY_SIZE(pnc357db1_4_dsc_modes_single),
-	.modes = pnc357db1_4_dsc_modes_single,
-	.num_modes = ARRAY_SIZE(pnc357db1_4_dsc_modes_single),
+	.dsc_cfg = &pnc357db1_4_dsc_cfg,
+	.dsc_modes = pnc357db1_4_dsc_modes,
+	.num_dsc_modes = ARRAY_SIZE(pnc357db1_4_dsc_modes),
+	.modes = pnc357db1_4_dsc_modes,
+	.num_modes = ARRAY_SIZE(pnc357db1_4_dsc_modes),
 	.init_sequence = pnc357db1_4_init_seq,
 	.is_dual_dsi = false,
 	.has_dcs_backlight = false,
 	.needs_display_on = true,
-};
-
-static const struct panel_desc csot_pnc357db1_4_desc = {
-	.width_mm = 265,
-	.height_mm = 166,
-	.lanes = 4,
-	.format = MIPI_DSI_FMT_RGB888,
-	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS |
-		      MIPI_DSI_MODE_LPM,
-	.supplies = pnc357db1_4_supplies,
-	.num_supplies = ARRAY_SIZE(pnc357db1_4_supplies),
-	.dsc_cfg = &ppc357db1_4_dsc_cfg,
-	.dsc_modes = ppc357db1_4_dsc_modes,
-	.num_dsc_modes = ARRAY_SIZE(ppc357db1_4_dsc_modes),
-	.modes = ppc357db1_4_modes,
-	.num_modes = ARRAY_SIZE(ppc357db1_4_modes),
-	.init_sequence = pnc357db1_4_init_seq,
-	.is_dual_dsi = true,
-	.has_dcs_backlight = false,
-	.needs_display_on = true,
-	.single_link_desc = &csot_pnc357db1_4_single_desc,
 };
 
 
