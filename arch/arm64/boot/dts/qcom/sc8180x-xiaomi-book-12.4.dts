@@ -12,6 +12,9 @@
 #include <dt-bindings/input/gpio-keys.h>
 #include <dt-bindings/input/input.h>
 #include <dt-bindings/regulator/qcom,rpmh-regulator.h>
+#include <dt-bindings/soc/qcom,apr.h>
+#include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
 #include "sc8180x.dtsi"
 #include "sc8180x-pmics.dtsi"
 
@@ -21,6 +24,90 @@
 
 	aliases {
 		serial0 = &uart13;
+	};
+
+	sound: sound {
+		compatible = "xiaomi,book-12.4-sndcard", "qcom,sdm845-sndcard";
+		model = "Xiaomi Book 12.4";
+
+		audio-routing =
+			"RX_BIAS", "MCLK",
+			"AMIC2", "MIC BIAS2",
+			"SpkrLeft IN", "SPK1 OUT",
+			"SpkrRight IN", "SPK2 OUT";
+
+		mm1-dai-link {
+			link-name = "MultiMedia1";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA1>;
+			};
+		};
+
+		mm2-dai-link {
+			link-name = "MultiMedia2";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA2>;
+			};
+		};
+
+		mm3-dai-link {
+			link-name = "MultiMedia3";
+
+			cpu {
+				sound-dai = <&q6asmdai MSM_FRONTEND_DAI_MULTIMEDIA3>;
+			};
+		};
+
+		slim-dai-link {
+			link-name = "SLIM Playback";
+
+			cpu {
+				sound-dai = <&q6afedai SLIMBUS_0_RX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&left_spkr>, <&right_spkr>,
+					    <&swm 0>, <&wcd9340 0>;
+			};
+		};
+
+		slimcap-dai-link {
+			link-name = "SLIM Capture";
+
+			cpu {
+				sound-dai = <&q6afedai SLIMBUS_0_TX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&wcd9340 1>;
+			};
+		};
+
+		slim-wcd-dai-link {
+			link-name = "SLIM WCD Playback";
+
+			cpu {
+				sound-dai = <&q6afedai SLIMBUS_1_RX>;
+			};
+
+			platform {
+				sound-dai = <&q6routing>;
+			};
+
+			codec {
+				sound-dai = <&wcd9340 2>;
+			};
+		};
 	};
 
 /*
@@ -525,6 +612,14 @@
     */
 };
 
+/*
+ * Windows also describes an audio companion (\_SB.ADSP.SLM1.ADCM.AUDD) on
+ * SPI4/CS0 with MBHC and audio-adapter children.  Its interrupt is delivered
+ * through the qcgpio/PDC event space instead of a plain TLMM GPIO, so it is
+ * left undescribed for now.  Speakers and headset are handled by the WCD9340
+ * on SLIMbus.
+ */
+
 // From PNC357DB1.xml
 // FIXME: Due to PEP0 defination, device is using PMIC-WLED
 // 		  backlight, need to confirm the configuration.
@@ -665,6 +760,76 @@
 	status = "okay";
 };
 
+&remoteproc_adsp_glink {
+	apr {
+		compatible = "qcom,apr-v2";
+		qcom,domain = <APR_DOMAIN_ADSP>;
+		qcom,glink-channels = "apr_audio_svc";
+		qcom,intents = <512 20>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		service@3 {
+			compatible = "qcom,q6core";
+			reg = <APR_SVC_ADSP_CORE>;
+			qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
+		};
+
+		q6afe: service@4 {
+			compatible = "qcom,q6afe";
+			reg = <APR_SVC_AFE>;
+			qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
+
+			q6afedai: dais {
+				compatible = "qcom,q6afe-dais";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				#sound-dai-cells = <1>;
+			};
+		};
+
+		q6asm: service@7 {
+			compatible = "qcom,q6asm";
+			reg = <APR_SVC_ASM>;
+			qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
+
+			q6asmdai: dais {
+				compatible = "qcom,q6asm-dais";
+				iommus = <&apps_smmu 0x1b21 0x0>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				#sound-dai-cells = <1>;
+
+				dai@0 {
+					reg = <MSM_FRONTEND_DAI_MULTIMEDIA1>;
+					direction = <Q6ASM_DAI_RX>;
+				};
+
+				dai@1 {
+					reg = <MSM_FRONTEND_DAI_MULTIMEDIA2>;
+					direction = <Q6ASM_DAI_TX>;
+				};
+
+				dai@2 {
+					reg = <MSM_FRONTEND_DAI_MULTIMEDIA3>;
+					direction = <Q6ASM_DAI_RX>;
+				};
+			};
+		};
+
+		q6adm: service@8 {
+			compatible = "qcom,q6adm";
+			reg = <APR_SVC_ADM>;
+			qcom,protection-domain = "avs/audio", "msm/adsp/audio_pd";
+
+			q6routing: routing {
+				compatible = "qcom,q6adm-routing";
+				#sound-dai-cells = <0>;
+			};
+		};
+	};
+};
+
 &remoteproc_cdsp {
 	memory-region = <&cdsp_mem>;
 	firmware-name = "qcom/XIAOMI/BOOK124/qccdsp8180.mbn";
@@ -677,6 +842,156 @@
 	firmware-name = "qcom/XIAOMI/BOOK124/qcmpss8180_nm.mbn";
 
 	status = "okay";
+};
+
+&soc {
+	slimbam: dma-controller@17184000 {
+		compatible = "qcom,bam-v1.7.4", "qcom,bam-v1.7.0";
+		reg = <0x0 0x17184000 0x0 0x2a000>;
+		interrupts = <GIC_SPI 164 IRQ_TYPE_LEVEL_HIGH>;
+		#dma-cells = <1>;
+		qcom,controlled-remotely;
+		qcom,ee = <1>;
+		qcom,num-ees = <4>;
+		num-channels = <23>;
+		iommus = <&apps_smmu 0x1b46 0x0>;
+	};
+
+	slim: slim-ngd@171c0000 {
+		compatible = "qcom,slim-ngd-v2.1.0";
+		reg = <0x0 0x171c0000 0x0 0x2c000>;
+		interrupts = <GIC_SPI 163 IRQ_TYPE_LEVEL_HIGH>;
+		dmas = <&slimbam 3>, <&slimbam 4>;
+		dma-names = "rx", "tx";
+		iommus = <&apps_smmu 0x1b46 0x0>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		slim@1 {
+			reg = <1>;
+			#address-cells = <2>;
+			#size-cells = <0>;
+
+			wcd9340_ifd: ifd@0,0 {
+				compatible = "slim217,250";
+				reg = <0 0>;
+			};
+
+			wcd9340: codec@1,0 {
+				compatible = "slim217,250";
+				reg = <1 0>;
+				slim-ifc-dev = <&wcd9340_ifd>;
+
+				#sound-dai-cells = <1>;
+
+				interrupts-extended = <&tlmm 123 IRQ_TYPE_LEVEL_HIGH>;
+				interrupt-controller;
+				#interrupt-cells = <1>;
+
+				clock-names = "extclk";
+				clocks = <&rpmhcc RPMH_LN_BB_CLK2>;
+
+				#clock-cells = <0>;
+				clock-frequency = <9600000>;
+				clock-output-names = "mclk";
+
+				pinctrl-0 = <&wcd_intr_default>, <&wcd_reset_default>;
+				pinctrl-names = "default";
+
+				reset-gpios = <&tlmm 143 GPIO_ACTIVE_HIGH>;
+
+				vdd-buck-sido-supply = <&vreg_s4a_1p8>;
+				vdd-buck-supply = <&vreg_s4a_1p8>;
+				vdd-tx-supply = <&vreg_s4a_1p8>;
+				vdd-rx-supply = <&vreg_s4a_1p8>;
+				vdd-io-supply = <&vreg_s4a_1p8>;
+
+				qcom,micbias1-microvolt = <1800000>;
+				qcom,micbias2-microvolt = <2850000>;
+				qcom,micbias3-microvolt = <2850000>;
+				qcom,micbias4-microvolt = <1800000>;
+				qcom,mbhc-buttons-vthreshold-microvolt = <75000 150000 237000 500000 500000 500000 500000 500000>;
+				qcom,mbhc-headset-vthreshold-microvolt = <1700000>;
+				qcom,mbhc-headphone-vthreshold-microvolt = <50000>;
+
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				wcdgpio: gpio-controller@42 {
+					compatible = "qcom,wcd9340-gpio";
+					gpio-controller;
+					#gpio-cells = <2>;
+					reg = <0x42 0x2>;
+
+					/*
+					 * The WSA881x driver only drives its SD_N
+					 * line once the amplifier has attached,
+					 * which is too late for it to answer bus
+					 * enumeration.  Hold the left amplifier
+					 * out of shutdown from the start so that
+					 * the SoundWire master can find it.
+					 *
+					 * SD_N is active low, so "output-low"
+					 * (logical 0) drives the line physically
+					 * high, i.e. the amplifier stays enabled.
+					 * The flags must match the amplifier's
+					 * powerdown-gpios or the driver would
+					 * invert the level.
+					 */
+					wsa-left-sd-n-hog {
+						gpio-hog;
+						gpios = <1 GPIO_ACTIVE_LOW>;
+						output-low;
+						line-name = "wsa-left-sd-n";
+					};
+				};
+
+				swm: soundwire@c85 {
+					compatible = "qcom,soundwire-v1.3.0";
+					reg = <0xc85 0x40>;
+					interrupts-extended = <&wcd9340 20>;
+
+					qcom,dout-ports = <6>;
+					qcom,din-ports = <2>;
+					qcom,ports-sinterval-low = /bits/ 8 <0x07 0x1f 0x3f 0x07 0x1f 0x3f 0x0f 0x0f>;
+					qcom,ports-offset1 = /bits/ 8 <0x01 0x02 0x0c 0x06 0x12 0x0d 0x07 0x0a>;
+					qcom,ports-offset2 = /bits/ 8 <0x00 0x00 0x1f 0x00 0x00 0x1f 0x00 0x00>;
+
+					#sound-dai-cells = <1>;
+					clocks = <&wcd9340>;
+					clock-names = "iface";
+					#address-cells = <2>;
+					#size-cells = <0>;
+
+					/*
+					 * Same speaker arrangement as the Lenovo
+					 * Flex 5G (SC8180X): the left amplifier
+					 * hangs off WCD9340 GPIO1 at SoundWire
+					 * unique ID 3 and the right one off GPIO2
+					 * at unique ID 4.  Both are wired into the
+					 * SLIM Playback DAI link.
+					 */
+					right_spkr: speaker@0,4 {
+						compatible = "sdw10217211000";
+						reg = <0 4>;
+						powerdown-gpios = <&wcdgpio 2 GPIO_ACTIVE_LOW>;
+						#thermal-sensor-cells = <0>;
+						sound-name-prefix = "SpkrRight";
+						#sound-dai-cells = <0>;
+					};
+
+					left_spkr: speaker@0,3 {
+						compatible = "sdw10217211000";
+						reg = <0 3>;
+						powerdown-gpios = <&wcdgpio 1 GPIO_ACTIVE_LOW>;
+						#thermal-sensor-cells = <0>;
+						sound-name-prefix = "SpkrLeft";
+						#sound-dai-cells = <0>;
+					};
+				};
+			};
+		};
+	};
 };
 
 &sdhc_2 {
@@ -856,6 +1171,23 @@
 		function = "gpio";
 
 		bias-pull-up;
+	};
+
+	wcd_reset_default: wcd-reset-default-state {
+		pins = "gpio143";
+		function = "gpio";
+
+		bias-disable;
+		drive-strength = <2>;
+	};
+
+	wcd_intr_default: wcd-intr-default-state {
+		pins = "gpio123";
+		function = "gpio";
+
+		bias-pull-down;
+		drive-strength = <2>;
+		input-enable;
 	};
 
 	i2c7_active: i2c7-active-state {
