@@ -652,9 +652,6 @@
 	status = "okay";
 	vdda-supply = <&vreg_l3c_1p2>;
 	refgen-supply = <&refgen>;
-	qcom,dual-dsi-mode;
-	qcom,sync-dual-dsi;
-	qcom,master-dsi;
 
 	panel@0 {
 		compatible = "csot,pnc357db1-4";
