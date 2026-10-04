@@ -144,6 +144,23 @@
 		};
 	};
 
+	/*
+	 * Panel backlight: LPG channel 5 on the PMC8180C (register base 0xbd00,
+	 * PWM channel index 4).  The bootloader leaves it running at ~1.17 kHz,
+	 * 256 of 511 duty; nothing in Linux used to touch it, which is why the
+	 * brightness never changed.  Lowering/raising this duty clearly dims and
+	 * brightens the panel, while the PMC8180C WLED block the panel used to
+	 * point at reads back as all zeroes and controls nothing.
+	 *
+	 * No brightness-levels table on purpose: pwm-backlight then uses its
+	 * CIE1931 curve with 4096 levels, which is a sane slider response.
+	 */
+	backlight: backlight {
+		compatible = "pwm-backlight";
+
+		pwms = <&pmc8180c_lpg 4 851667>;
+	};
+
 	pmic-glink {
 		compatible = "qcom,sc8180x-pmic-glink", "qcom,pmic-glink";
 
@@ -625,23 +642,16 @@
  * on SLIMbus.
  */
 
-// From PNC357DB1.xml
-// FIXME: Due to PEP0 defination, device is using PMIC-WLED
-// 		  backlight, need to confirm the configuration.
-// FIXME: The units may be wrong. Need to be verified
+/*
+ * The Windows panel XML (PNC357DB1.xml) says the backlight is PMIC-side, and
+ * that is right - but it is the LPG PWM, not the WLED.  This WLED block reads
+ * back as all zeroes, disabling its module does not turn the panel off, and no
+ * register in it changes with the backlight value, so it is not wired to the
+ * panel's LEDs on this board.  Keep it disabled: it only registers a second,
+ * useless "backlight" device that competes with the pwm-backlight one.
+ */
 &pmc8180c_wled {
-    qcom,switching-freq = <1920>;
-    // From PNC357DB1-4 Datasheet:
-    // LED Light Bar Power Supply Current: {
-    //     "Symbol": "LED_K(1-8)",
-    //     "Value": { "Typ": 140 },
-    //     "Unit": "mA"
-    // }
-    qcom,num-strings = <2>;
-    qcom,current-limit-microamp = <17500>;
-    qcom,cabc;
-
-    status = "okay";
+	status = "disabled";
 };
 
 &mdss {
@@ -660,7 +670,10 @@
 		vdd1-supply = <&vreg_l1c_1p8>;
 		vdd-supply = <&vreg_l12a_1p8>;
 
-		backlight = <&pmc8180c_wled>;
+		/*
+		 * No backlight phandle: the panel is dimmed by the LPG PWM
+		 * (see the backlight node above), not by a PMIC WLED.
+		 */
 		reset-gpios = <&tlmm 116 GPIO_ACTIVE_LOW>;
 		enable-gpios = <&tlmm 6 GPIO_ACTIVE_HIGH>;
 
