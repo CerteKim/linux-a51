@@ -159,15 +159,16 @@
 	 *
 	 * Pin 0x0001 maps to the first PMIC's GPIO 1, which is also where the
 	 * linux-surface "surface-pro-x: Add support for volume buttons" commit
-	 * (4bc1a33) puts volume-down, so that one is certain.  PM01 numbers the
-	 * pins of every PMIC in one space and the stride is not documented, so
-	 * pin 0x0085 has three readings and all three are instantiated as
-	 * separate input devices - whichever fires identifies the wiring, and the
-	 * other two get removed again:
+	 * (4bc1a33) puts volume-down, so that one is reasonably certain.
 	 *
-	 *     A: 0x85 = (USID 8 << 4) | 5  -> pmc8180_2 GPIO 5
-	 *     B: 0x85 = (USID 4 << 5) | 5  -> pmc8180c  GPIO 5
-	 *     C: 0x85 = 0x80 | 5           -> pmc8180_1 GPIO 5
+	 * Pin 0x0085 is shared with the Surface Pro X, whose own button device
+	 * (\_SB.MSBT, MSHW0040) describes the same three GpioInts on the same
+	 * aggregate controller - 0x00, 0x80 and 0x85 - and whose Linux port maps
+	 * the two volume keys to GPIO 1 and GPIO 6 of the first PMIC.  That fits
+	 * a "+0x7f" offset (0x7f + 1 = 0x80, 0x7f + 6 = 0x85), which is why GPIO 6
+	 * is the primary candidate here; GPIO 5 is kept as the second reading
+	 * (0x80 + n).  Both are instantiated - whichever fires identifies the
+	 * wiring and the other one is removed again.
 	 */
 	volume-down-keys {
 		compatible = "gpio-keys";
@@ -183,42 +184,28 @@
 		};
 	};
 
-	volume-up-a-keys {
+	volume-up-6-keys {
 		compatible = "gpio-keys";
-		label = "Volume Up probe A (pmc8180_2 gpio5)";
+		label = "Volume Up (pmc8180_1 gpio6)";
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&volume_up_a_default_state>;
+		pinctrl-0 = <&volume_up_6_default_state>;
 
-		volume-up-a {
+		volume-up-6 {
 			label = "Volume Up";
-			gpios = <&pmc8180_2_gpios 5 GPIO_ACTIVE_LOW>;
+			gpios = <&pmc8180_1_gpios 6 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEUP>;
 		};
 	};
 
-	volume-up-b-keys {
+	volume-up-5-keys {
 		compatible = "gpio-keys";
-		label = "Volume Up probe B (pmc8180c gpio5)";
+		label = "Volume Up (pmc8180_1 gpio5)";
 
 		pinctrl-names = "default";
-		pinctrl-0 = <&volume_up_b_default_state>;
+		pinctrl-0 = <&volume_up_5_default_state>;
 
-		volume-up-b {
-			label = "Volume Up";
-			gpios = <&pmc8180c_gpios 5 GPIO_ACTIVE_LOW>;
-			linux,code = <KEY_VOLUMEUP>;
-		};
-	};
-
-	volume-up-c-keys {
-		compatible = "gpio-keys";
-		label = "Volume Up probe C (pmc8180_1 gpio5)";
-
-		pinctrl-names = "default";
-		pinctrl-0 = <&volume_up_c_default_state>;
-
-		volume-up-c {
+		volume-up-5 {
 			label = "Volume Up";
 			gpios = <&pmc8180_1_gpios 5 GPIO_ACTIVE_LOW>;
 			linux,code = <KEY_VOLUMEUP>;
@@ -1494,27 +1481,15 @@
 		qcom,drive-strength = <0>;
 	};
 
-	volume_up_c_default_state: volume-up-c-default-state {
-		pins = "gpio5";
+	volume_up_6_default_state: volume-up-6-default-state {
+		pins = "gpio6";
 		function = "normal";
 		input-enable;
 		bias-pull-up;
 		qcom,drive-strength = <0>;
 	};
-};
 
-&pmc8180_2_gpios {
-	volume_up_a_default_state: volume-up-a-default-state {
-		pins = "gpio5";
-		function = "normal";
-		input-enable;
-		bias-pull-up;
-		qcom,drive-strength = <0>;
-	};
-};
-
-&pmc8180c_gpios {
-	volume_up_b_default_state: volume-up-b-default-state {
+	volume_up_5_default_state: volume-up-5-default-state {
 		pins = "gpio5";
 		function = "normal";
 		input-enable;
