@@ -1480,6 +1480,42 @@
 };
 
 /*
+ * GPU DVFS: the full set this part advertises.
+ *
+ * sc8180x.dtsi carries the stock SC8180X table (…, 461, 500, 514 MHz).  The
+ * part in this board is binned higher, and its own ACPI tables
+ * ("ENGINE_PSTATE_SET" 0x02 / "GRAPHICS_FREQ_CONTROL" / "CORE_CLOCK") list
+ * further states — the profile Windows runs tops out at 670 MHz:
+ *
+ *     530 MHz @ NOM      (0x100)
+ *     595 MHz @ NOM_L1   (0x140)
+ *     670 MHz @ TURBO_L1 (0x1a0)
+ *
+ * Declaring them here is all that is needed: a6xx_hfi_send_perf_table() hands
+ * the whole OPP table to the GMU (frequencies and, per level, the GX rail arc
+ * vote derived from opp-level), so these become real firmware DVFS levels.
+ * Each of the three levels is already used by a stock state (405/461/514 MHz),
+ * so the RPMh "gfx.lvl" lookup cannot fail on them.  The 625 MHz (TURBO) and
+ * 718 MHz (TURBO_L2) states of the higher profiles are deliberately left out.
+ */
+&gpu_opp_table {
+	opp-530000000 {
+		opp-hz = /bits/ 64 <530000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_NOM>;
+	};
+
+	opp-595000000 {
+		opp-hz = /bits/ 64 <595000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_NOM_L1>;
+	};
+
+	opp-670000000 {
+		opp-hz = /bits/ 64 <670000000>;
+		opp-level = <RPMH_REGULATOR_LEVEL_TURBO_L1>;
+	};
+};
+
+/*
  * Debug aid: persistent RAM for oops/panic records, so a freeze that ends in a
  * panic still leaves the kernel log behind.  That is the only way to see how
  * far a hanging probe got, since journald cannot flush during a bus stall
