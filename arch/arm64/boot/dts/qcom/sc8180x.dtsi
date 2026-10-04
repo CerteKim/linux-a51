@@ -3118,14 +3118,20 @@
 					required-opps = <&rpmhpd_opp_svs>;
 				};
 
-				opp-366000000 {
-					opp-hz = /bits/ 64 <366000000>;
+				opp-365000000 {
+					opp-hz = /bits/ 64 <365000000>;
 					required-opps = <&rpmhpd_opp_svs_l1>;
 				};
 
 				opp-444000000 {
 					opp-hz = /bits/ 64 <444000000>;
 					required-opps = <&rpmhpd_opp_nom>;
+				};
+
+				/* highest rate the iris_clk_src table offers */
+				opp-533000000 {
+					opp-hz = /bits/ 64 <533000000>;
+					required-opps = <&rpmhpd_opp_turbo>;
 				};
 			};
 		};
