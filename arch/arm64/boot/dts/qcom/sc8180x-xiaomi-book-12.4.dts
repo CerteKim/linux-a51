@@ -148,42 +148,25 @@
 	 * Volume keys.  The vendor device tree does not describe them at all, and
 	 * Linux has no driver for the Windows description either: they live in the
 	 * ACPI Generic Buttons device (\_SB.BTNS, _HID ACPI0011) as GpioInt
-	 * resources on \_SB.PM01, the aggregate PMIC GPIO controller:
+	 * resources on \_SB.PM01, the aggregate PMIC controller:
 	 *
-	 *     pin 0x0001  ActiveBoth, Exclusive,        PullDown  -> Volume Down
-	 *     pin 0x0085  ActiveBoth, Exclusive,        PullUp    -> Volume Up
-	 *     pin 0x0000  ActiveBoth, ExclusiveAndWake, PullDown  -> (not a key)
+	 *     pin 0x0000  ActiveBoth, ExclusiveAndWake, PullDown -> usage page 1, 0x81  = KPDPWR
+	 *     pin 0x0001  ActiveBoth, Exclusive,        PullDown -> page 0x0c, 0xea   = Volume Down
+	 *     pin 0x0085  ActiveBoth, Exclusive,        PullUp   -> page 0x0c, 0xe9   = Volume Up
 	 *
-	 * with the _DSD (UUID fa6bd625-9ce8-470d-a2c7-b3ca36c4282e) carrying HID
-	 * Consumer usages 0xE9 (volume increment) and 0xEA (volume decrement).
+	 * (the _DSD UUID is fa6bd625-9ce8-470d-a2c7-b3ca36c4282e).  PM01 mixes two
+	 * number spaces: plain PMIC interrupts appear under 0x80 (the ADC/BCL
+	 * entries in both this machine's and the Surface Pro X's dump are like
+	 * that), while the PMIC GPIOs are 0x7f + gpio - the Surface Pro X button
+	 * device (\_SB.MSBT, MSHW0040) declares the same 0x00/0x80/0x85 triple and
+	 * its Linux port drives the volume keys from the first PMIC's GPIO 1 and
+	 * GPIO 6, which is exactly 0x80 and 0x85.
 	 *
-	 * Pin 0x0001 maps to the first PMIC's GPIO 1, which is also where the
-	 * linux-surface "surface-pro-x: Add support for volume buttons" commit
-	 * (4bc1a33) puts volume-down, so that one is reasonably certain.
-	 *
-	 * Pin 0x0085 is shared with the Surface Pro X, whose own button device
-	 * (\_SB.MSBT, MSHW0040) describes the same three GpioInts on the same
-	 * aggregate controller - 0x00, 0x80 and 0x85 - and whose Linux port maps
-	 * the two volume keys to GPIO 1 and GPIO 6 of the first PMIC.  That fits
-	 * a "+0x7f" offset (0x7f + 1 = 0x80, 0x7f + 6 = 0x85), which is why GPIO 6
-	 * is the primary candidate here; GPIO 5 is kept as the second reading
-	 * (0x80 + n).  Both are instantiated - whichever fires identifies the
-	 * wiring and the other one is removed again.
+	 * So on this machine:
+	 *   0x0000 = PON KPDPWR  -> the power key, enabled below as pmc8180_pwrkey
+	 *   0x0001 = PON RESIN   -> volume down, enabled below as pmc8180_resin
+	 *   0x0085 = GPIO 6      -> volume up (verified on hardware)
 	 */
-	volume-down-keys {
-		compatible = "gpio-keys";
-		label = "Volume Down";
-
-		pinctrl-names = "default";
-		pinctrl-0 = <&volume_down_default_state>;
-
-		volume-down {
-			label = "Volume Down";
-			gpios = <&pmc8180_1_gpios 1 GPIO_ACTIVE_LOW>;
-			linux,code = <KEY_VOLUMEDOWN>;
-		};
-	};
-
 	volume-up-6-keys {
 		compatible = "gpio-keys";
 		label = "Volume Up (pmc8180_1 gpio6)";
@@ -1466,21 +1449,23 @@
 };
 
 /*
- * Pin configuration for the volume-key probe.  All are inputs with an internal
- * pull-up: the sibling Surface Pro X port drives both volume keys active-low
- * with a pull-up, while the Windows descriptor for the volume-down pin here
- * says PullDown - if a key reports the opposite of what is pressed, the flag
- * (or the bias) is what needs flipping.
+ * Volume down is the PON's RESIN line, not a PMIC GPIO (ACPI pin 0x0001 on
+ * PM01, next to the power key at 0x0000).  sc8180x-pmics.dtsi declares it
+ * disabled, as upstream does for the PMIC nodes; the same enable exists on the
+ * Surface Duo (sm8150-microsoft-surface-duo.dts) for exactly this key.
+ */
+&pmc8180_resin {
+	status = "okay";
+	linux,code = <KEY_VOLUMEDOWN>;
+};
+
+/*
+ * Volume up is a PMIC GPIO.  Both readings below are declared for now, both as
+ * inputs with an internal pull-up - matching the Surface Pro X port, which
+ * drives its volume keys active-low with a pull-up.  If a key reports the
+ * opposite of what is pressed, the flag (or the bias) is what needs flipping.
  */
 &pmc8180_1_gpios {
-	volume_down_default_state: volume-down-default-state {
-		pins = "gpio1";
-		function = "normal";
-		input-enable;
-		bias-pull-up;
-		qcom,drive-strength = <0>;
-	};
-
 	volume_up_6_default_state: volume-up-6-default-state {
 		pins = "gpio6";
 		function = "normal";
