@@ -648,11 +648,6 @@
 	status = "okay";
 };
 
-/* Bringing-up probe of the Venus/IRIS video decoder; see sc8180x.dtsi. */
-&venus {
-	status = "okay";
-};
-
 &mdss_dsi0 {
 	status = "okay";
 	vdda-supply = <&vreg_l3c_1p2>;
