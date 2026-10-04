@@ -238,6 +238,18 @@ EXPORT_SYMBOL_GPL(qcom_mdt_read_metadata);
  *
  * Returns 0 on success, negative errno otherwise.
  */
+/*
+ * DEBUG: on platforms whose TZ does not implement PAS_MEM_SETUP the firmware
+ * has to be loaded at the fixed carve-out the bootloader reserved, and the
+ * relocation call must be skipped.  Only the SCM call is skipped: the loader
+ * still places the segments relative to the lowest segment address, so the
+ * image ends up at exactly the offsets the relocatable path would use.
+ */
+static bool qcom_mdt_skip_pas_mem_setup;
+module_param_named(skip_pas_mem_setup, qcom_mdt_skip_pas_mem_setup, bool, 0644);
+MODULE_PARM_DESC(skip_pas_mem_setup,
+	"DEBUG: do not ask TZ to set up firmware relocation");
+
 int qcom_mdt_pas_init(struct device *dev, const struct firmware *fw,
 		      const char *fw_name, int pas_id, phys_addr_t mem_phys,
 		      struct qcom_scm_pas_metadata *ctx)
@@ -290,7 +302,7 @@ int qcom_mdt_pas_init(struct device *dev, const struct firmware *fw,
 		goto out;
 	}
 
-	if (relocate) {
+	if (relocate && !qcom_mdt_skip_pas_mem_setup) {
 		ret = qcom_scm_pas_mem_setup(pas_id, mem_phys, max_addr - min_addr);
 		if (ret) {
 			/* Unable to set up relocation */

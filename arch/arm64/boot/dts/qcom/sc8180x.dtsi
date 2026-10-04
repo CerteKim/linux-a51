@@ -605,7 +605,7 @@
 		};
 	};
 
-	reserved-memory {
+	reserved_memory: reserved-memory {
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
@@ -665,6 +665,27 @@
 
 		reserved@9f800000 {
 			reg = <0x0 0x9f800000 0x0 0x800000>;
+			no-map;
+		};
+
+		/*
+		 * Scratch memory the PIL loader copies the VPU firmware into.
+		 * Like sm8250's video_mem and sc8280xp's pil_video_mem, and
+		 * required by the iris driver (iris_firmware.c looks the
+		 * "memory-region" phandle up and bails out without it).
+		 * Carved out of the free DRAM above the last bootloader
+		 * reservation, which ends exactly at 0xa0000000.
+		 */
+		/*
+		 * Firmware carve-out for the VPU.  It has to live inside the PIL
+		 * pool ("PGCM") that the hypervisor/TZ protects - the Windows PIL
+		 * configuration gives it as base 0x8bd80000, size 0xe780000, and
+		 * TZ rejects any firmware region outside it with -EINVAL.  The
+		 * 5 MB size is exactly what the venus image needs (and what the
+		 * registry's SubsystemLoad\VENUS reservation says).
+		 */
+		video_mem: memory@8bd80000 {
+			reg = <0x0 0x8bd80000 0x0 0x500000>;
 			no-map;
 		};
 	};
@@ -3071,14 +3092,27 @@
 		};
 
 		/*
-		 * Bringing-up probe only: the MMIO window, interrupt and IOMMU
-		 * stream are taken from the sm8250/sc7180 layout (both place
-		 * Venus at 0xaa00000 / SPI 174), the clocks and power domains
-		 * from this SoC's videocc.  Verified or adjusted on hardware via
-		 * the probe result.
+		 * The SC8180X VPU is the IRIS1/Gen1 core, so the iris driver's
+		 * sm8250 platform data applies: the compatible follows the
+		 * upstream scheme (a SoC specific "qcom,<soc>-iris" string with
+		 * the sm8250 one as fallback, exactly as the SC8280XP/SM8350
+		 * series does), which is what the of_match_table binds.
+		 *
+		 * Still copied from the sm8250/sc7180 layout and to be verified
+		 * on hardware: the apps_smmu stream (sc8280xp uses 0x2a00, so
+		 * this is per-SoC silicon, not inheritable -- an arm-smmu fault
+		 * would report the real one), and whether the VPU needs the
+		 * VIDEO_CC_IRIS_AHB_CLK that only this SoC's videocc has.
+		 *
+		 * "firmware-name" points at the firmware extracted from the
+		 * Windows driver package (qcvss8180.mbn, VIDEO.IR.1.2); the
+		 * sm8250 image is not compatible with this core.
 		 */
 		venus: video-codec@aa00000 {
-			compatible = "qcom,sc8180x-venus";
+			compatible = "qcom,sc8180x-iris", "qcom,sm8250-venus";
+			/* 1 MB: the vendor's 2 MB window overlaps the VIDEOCC at 0xab00000,
+			 * and mainline reserves the region (unlike the downstream driver).
+			 */
 			reg = <0 0x0aa00000 0 0x100000>;
 			interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
 
@@ -3088,20 +3122,29 @@
 			power-domain-names = "venus", "vcodec0", "mx";
 			operating-points-v2 = <&venus_opp_table>;
 
-			clocks = <&gcc GCC_VIDEO_AXI0_CLK>,
+			clocks = <&gcc GCC_VIDEO_AXIC_CLK>,
+				 <&gcc GCC_VIDEO_AXI0_CLK>,
+				 <&gcc GCC_VIDEO_AXI1_CLK>,
 				 <&videocc VIDEO_CC_MVSC_CORE_CLK>,
-				 <&videocc VIDEO_CC_MVS0_CORE_CLK>;
-			clock-names = "iface", "core", "vcodec0_core";
+				 <&videocc VIDEO_CC_MVS0_CORE_CLK>,
+				 <&videocc VIDEO_CC_MVS1_CORE_CLK>,
+				 <&videocc VIDEO_CC_IRIS_AHB_CLK>;
+			clock-names = "axic", "iface", "axi1",
+				      "core", "vcodec0_core", "cvp_core", "ahb";
 
 			interconnects = <&gem_noc MASTER_AMPSS_M0 0 &config_noc SLAVE_VENUS_CFG 0>,
 					<&mmss_noc MASTER_VIDEO_P0 0 &mc_virt SLAVE_EBI_CH0 0>;
 			interconnect-names = "cpu-cfg", "video-mem";
 
-			iommus = <&apps_smmu 0x2100 0x0400>;
+			iommus = <&apps_smmu 0x1300 0x60>;
+			memory-region = <&video_mem>;
+			firmware-name = "qcom/sc8180x/venus.mbn";
 
-			resets = <&gcc GCC_VIDEO_AXI0_CLK_BCR>,
-				 <&videocc VIDEO_CC_MVSC_CORE_CLK_BCR>;
-			reset-names = "bus", "core";
+			resets = <&gcc GCC_VIDEO_AXIC_CLK_BCR>,
+				 <&videocc VIDEO_CC_MVSC_CORE_CLK_BCR>,
+				 <&gcc GCC_VIDEO_AXI0_CLK_BCR>,
+				 <&gcc GCC_VIDEO_AXI1_CLK_BCR>;
+			reset-names = "bus", "core", "axi0", "axi1";
 
 			status = "disabled";
 

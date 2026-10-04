@@ -43,13 +43,14 @@ enum pipe_type {
 
 extern struct iris_platform_data qcs8300_data;
 extern struct iris_platform_data sm8250_data;
-extern struct iris_platform_data sc8180x_data;
 extern struct iris_platform_data sm8550_data;
 extern struct iris_platform_data sm8650_data;
 extern struct iris_platform_data sm8750_data;
 
 enum platform_clk_type {
 	IRIS_AXI_CLK, /* AXI0 in case of platforms with multiple AXI clocks */
+	IRIS_AXIC_CLK, /* AXI config port (SC8180X) */
+	IRIS_AHB_CLK, /* register/AHB interface clock (SC8180X) */
 	IRIS_CTRL_CLK,
 	IRIS_HW_CLK,
 	IRIS_AXI1_CLK,

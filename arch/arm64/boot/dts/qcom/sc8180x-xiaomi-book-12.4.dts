@@ -1383,3 +1383,23 @@
 		};
 	};
 };
+
+/*
+ * Debug aid: persistent RAM for oops/panic records, so a freeze that ends in a
+ * panic still leaves the kernel log behind.  That is the only way to see how
+ * far a hanging probe got, since journald cannot flush during a bus stall
+ * (read it after the reboot with `sudo cat /sys/fs/pstore/dmesg-ramoops-0`).
+ * To make a stall produce a panic rather than just a report:
+ *   echo 1 | sudo tee /proc/sys/kernel/panic_on_rcu_stall
+ */
+&reserved_memory {
+	ramoops@a0500000 {
+		compatible = "ramoops";
+		reg = <0x0 0xa0500000 0x0 0x100000>;
+		record-size = <0x40000>;
+		console-size = <0x40000>;
+		ftrace-size = <0x40000>;
+		pmsg-size = <0x20000>;
+		ecc-size = <16>;
+	};
+};

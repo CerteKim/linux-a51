@@ -18,7 +18,12 @@ allOf:
 
 properties:
   compatible:
-    const: qcom,sm8250-venus
+    oneOf:
+      - const: qcom,sm8250-venus
+      - items:
+          - enum:
+              - qcom,sc8180x-iris
+          - const: qcom,sm8250-venus
 
   power-domains:
     minItems: 2

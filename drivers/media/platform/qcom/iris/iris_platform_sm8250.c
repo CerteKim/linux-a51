@@ -246,7 +246,10 @@ static struct platform_inst_caps platform_inst_cap_sm8250 = {
 
 static void iris_set_sm8250_preset_registers(struct iris_core *core)
 {
-	writel(0x0, core->reg_base + 0xB0088);
+	/* 0xB0088 is a Venus 6xx register (WRAPPER_CORE_POWER_STATUS_V6 + 8);
+	 * the older map has no equivalent, so skip it for this test.
+	 */
+	dev_err(core->dev, "IRIS-TRACE: preset regs skipped (Venus 4xx map)\n");
 }
 
 static const struct icc_info sm8250_icc_table[] = {
@@ -269,6 +272,9 @@ static const char * const sm8250_opp_pd_table[] = { "mx" };
 
 static const struct platform_clk_data sm8250_clk_table[] = {
 	{IRIS_AXI_CLK,  "iface"        },
+	{IRIS_AXIC_CLK, "axic"         },
+	{IRIS_AXI1_CLK, "axi1"         },
+	{IRIS_AHB_CLK,  "ahb"          },
 	{IRIS_CTRL_CLK, "core"         },
 	{IRIS_HW_CLK,   "vcodec0_core" },
 };
@@ -315,69 +321,6 @@ static const u32 sm8250_enc_ip_int_buf_tbl[] = {
 };
 
 struct iris_platform_data sm8250_data = {
-	.get_instance = iris_hfi_gen1_get_instance,
-	.init_hfi_command_ops = &iris_hfi_gen1_command_ops_init,
-	.init_hfi_response_ops = iris_hfi_gen1_response_ops_init,
-	.get_vpu_buffer_size = iris_vpu_buf_size,
-	.vpu_ops = &iris_vpu2_ops,
-	.set_preset_registers = iris_set_sm8250_preset_registers,
-	.icc_tbl = sm8250_icc_table,
-	.icc_tbl_size = ARRAY_SIZE(sm8250_icc_table),
-	.clk_rst_tbl = sm8250_clk_reset_table,
-	.clk_rst_tbl_size = ARRAY_SIZE(sm8250_clk_reset_table),
-	.bw_tbl_dec = sm8250_bw_table_dec,
-	.bw_tbl_dec_size = ARRAY_SIZE(sm8250_bw_table_dec),
-	.pmdomain_tbl = sm8250_pmdomain_table,
-	.pmdomain_tbl_size = ARRAY_SIZE(sm8250_pmdomain_table),
-	.opp_pd_tbl = sm8250_opp_pd_table,
-	.opp_pd_tbl_size = ARRAY_SIZE(sm8250_opp_pd_table),
-	.clk_tbl = sm8250_clk_table,
-	.clk_tbl_size = ARRAY_SIZE(sm8250_clk_table),
-	/* Upper bound of DMA address range */
-	.dma_mask = 0xe0000000 - 1,
-	.fwname = "qcom/vpu-1.0/venus.mbn",
-	.pas_id = IRIS_PAS_ID,
-	.inst_caps = &platform_inst_cap_sm8250,
-	.inst_fw_caps_dec = inst_fw_cap_sm8250_dec,
-	.inst_fw_caps_dec_size = ARRAY_SIZE(inst_fw_cap_sm8250_dec),
-	.inst_fw_caps_enc = inst_fw_cap_sm8250_enc,
-	.inst_fw_caps_enc_size = ARRAY_SIZE(inst_fw_cap_sm8250_enc),
-	.tz_cp_config_data = &tz_cp_config_sm8250,
-	.hw_response_timeout = HW_RESPONSE_TIMEOUT_VALUE,
-	.num_vpp_pipe = 4,
-	.max_session_count = 16,
-	.max_core_mbpf = NUM_MBS_8K,
-	.max_core_mbps = ((7680 * 4320) / 256) * 60,
-	.dec_input_config_params_default =
-		sm8250_vdec_input_config_param_default,
-	.dec_input_config_params_default_size =
-		ARRAY_SIZE(sm8250_vdec_input_config_param_default),
-	.enc_input_config_params = sm8250_venc_input_config_param,
-	.enc_input_config_params_size =
-		ARRAY_SIZE(sm8250_venc_input_config_param),
-
-	.dec_ip_int_buf_tbl = sm8250_dec_ip_int_buf_tbl,
-	.dec_ip_int_buf_tbl_size = ARRAY_SIZE(sm8250_dec_ip_int_buf_tbl),
-	.dec_op_int_buf_tbl = sm8250_dec_op_int_buf_tbl,
-	.dec_op_int_buf_tbl_size = ARRAY_SIZE(sm8250_dec_op_int_buf_tbl),
-
-	.enc_ip_int_buf_tbl = sm8250_enc_ip_int_buf_tbl,
-	.enc_ip_int_buf_tbl_size = ARRAY_SIZE(sm8250_enc_ip_int_buf_tbl),
-};
-
-
-/*
- * SC8180X (Snapdragon 8cx Gen 2) bring-up entry.
- *
- * The block is an IRIS1 VPU (the Windows firmware reports VIDEO.IR.1.2), which
- * is the same generation as SM8250, so the platform data is copied from there
- * verbatim as the starting point.  The device tree uses this SoC's videocc
- * with the same clock names, so this is expected to at least reach the
- * firmware load.  The differences to sort out are the physical address space
- * id and the secure context bank, and the firmware itself: the SC8180X IRIS1
- * firmware is not in linux-firmware.
- */
-struct iris_platform_data sc8180x_data = {
 	.get_instance = iris_hfi_gen1_get_instance,
 	.init_hfi_command_ops = &iris_hfi_gen1_command_ops_init,
 	.init_hfi_response_ops = iris_hfi_gen1_response_ops_init,

@@ -3,6 +3,7 @@
  * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
+#include <linux/clk-provider.h>
 #include <linux/clk.h>
 #include <linux/interconnect.h>
 #include <linux/pm_domain.h>
@@ -36,6 +37,7 @@ int iris_set_icc_bw(struct iris_core *core, unsigned long icc_bw)
 
 			core->icc_tbl[i].avg_bw = bw_kbps;
 
+	dev_err(core->dev, "IRIS-TRACE: icc_bulk_set_bw(%lu)\n", bw_kbps);
 			core->power.icc_bw = bw_kbps;
 			break;
 		}
@@ -62,6 +64,7 @@ int iris_enable_power_domains(struct iris_core *core, struct device *pd_dev)
 {
 	int ret;
 
+	dev_err(core->dev, "IRIS-TRACE: enable pd %s (opp vote first)\n", dev_name(pd_dev));
 	ret = dev_pm_opp_set_rate(core->dev, ULONG_MAX);
 	if (ret)
 		return ret;
@@ -111,9 +114,13 @@ int iris_prepare_enable_clock(struct iris_core *core, enum platform_clk_type clk
 	struct clk *clock;
 
 	clock = iris_get_clk_by_type(core, clk_type);
-	if (!clock)
+	if (!clock) {
+		dev_err(core->dev, "IRIS-TRACE: clock type %d not found in DT\n", clk_type);
 		return -EINVAL;
+	}
 
+	dev_err(core->dev, "IRIS-TRACE: enable clock %d (%s)\n", clk_type,
+		__clk_get_name(clock));
 	return clk_prepare_enable(clock);
 }
 

@@ -356,10 +356,6 @@ static const struct of_device_id iris_dt_match[] = {
 		.compatible = "qcom,qcs8300-iris",
 		.data = &qcs8300_data,
 	},
-	{
-		.compatible = "qcom,sc8180x-venus",
-		.data = &sc8180x_data,
-	},
 #if (!IS_ENABLED(CONFIG_VIDEO_QCOM_VENUS))
 	{
 		.compatible = "qcom,sm8250-venus",

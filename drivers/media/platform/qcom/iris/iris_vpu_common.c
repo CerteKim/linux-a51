@@ -50,6 +50,7 @@
 #define WRAPPER_INTR_STATUS_A2H_BMSK		BIT(2)
 
 #define WRAPPER_INTR_MASK			(WRAPPER_BASE_OFFS + 0x10)
+#define WRAPPER_INTR_CLEAR			(WRAPPER_BASE_OFFS + 0x14)
 #define WRAPPER_INTR_MASK_A2HWD_BMSK		BIT(3)
 #define WRAPPER_INTR_MASK_A2HCPU_BMSK		BIT(2)
 
@@ -76,6 +77,8 @@ static void iris_vpu_interrupt_init(struct iris_core *core)
 	u32 mask_val;
 
 	mask_val = readl(core->reg_base + WRAPPER_INTR_MASK);
+	dev_err(core->dev, "IRIS-TRACE: WRAPPER_INTR_MASK (+0x%x) = 0x%x (expect 0x1f6)\n",
+		WRAPPER_INTR_MASK, mask_val);
 	mask_val &= ~(WRAPPER_INTR_MASK_A2HWD_BMSK |
 		      WRAPPER_INTR_MASK_A2HCPU_BMSK);
 	writel(mask_val, core->reg_base + WRAPPER_INTR_MASK);
@@ -115,10 +118,20 @@ int iris_vpu_boot_firmware(struct iris_core *core)
 {
 	u32 ctrl_init = BIT(0), ctrl_status = 0, count = 0, max_tries = 1000;
 
+	dev_err(core->dev, "IRIS-TRACE: boot_fw: ucregion map\n");
 	iris_vpu_setup_ucregion_memory_map(core);
 
-	writel(ctrl_init, core->reg_base + CTRL_INIT);
+	/* hfi_venus.c's AR50 (non-IRIS2) boot path masks down to just the
+	 * VCODEC interrupt, writes the HFI-version register and only then
+	 * kicks CTRL_INIT.  The iris driver had a Venus-6xx mask (0x1f2) here,
+	 * which unmasks the A2HWD/A2HCPU sources as well; on a level-triggered
+	 * IRQ that is a storm waiting for the first firmware interrupt. */
+	dev_err(core->dev, "IRIS-TRACE: boot_fw: intr mask 0x8\n");
+	writel(0x8, core->reg_base + WRAPPER_INTR_MASK);
+
+	dev_err(core->dev, "IRIS-TRACE: boot_fw: CTRL_INIT write\n");
 	writel(0x1, core->reg_base + CPU_CS_SCIACMDARG3);
+	writel(ctrl_init, core->reg_base + CTRL_INIT);
 
 	while (!ctrl_status && count < max_tries) {
 		ctrl_status = readl(core->reg_base + CTRL_STATUS);
@@ -131,13 +144,15 @@ int iris_vpu_boot_firmware(struct iris_core *core)
 		count++;
 	}
 
+	dev_err(core->dev, "IRIS-TRACE: boot_fw: ctrl_status=%#x count=%u\n", ctrl_status, count);
 	if (count >= max_tries) {
 		dev_err(core->dev, "error booting up iris firmware\n");
 		return -ETIME;
 	}
 
-	writel(HOST2XTENSA_INTR_ENABLE, core->reg_base + CPU_CS_H2XSOFTINTEN);
-	writel(0x0, core->reg_base + CPU_CS_X2RPMH);
+	/* CPU_CS_H2XSOFTINTEN (0x148) and CPU_CS_X2RPMH (0x168) are Venus-6xx
+	 * registers; hfi_venus.c writes them only for IRIS2/IRIS2_1/AR50-lite,
+	 * and the Venus-4xx boot path stops after CTRL_INIT. */
 
 	return 0;
 }
@@ -146,6 +161,7 @@ void iris_vpu_raise_interrupt(struct iris_core *core)
 {
 	writel(1 << CPU_IC_SOFTINT_H2A_SHFT, core->reg_base + CPU_IC_SOFTINT);
 }
+
 
 void iris_vpu_clear_interrupt(struct iris_core *core)
 {
@@ -160,6 +176,13 @@ void iris_vpu_clear_interrupt(struct iris_core *core)
 		core->intr_status |= intr_status;
 
 	writel(CLEAR_XTENSA2HOST_INTR, core->reg_base + CPU_CS_A2HSOFTINTCLR);
+
+	/* The wrapper keeps its own status latch; the IRQ is level triggered, so
+	 * on the older cores (everything that is not IRIS2/AR50-lite, which is
+	 * what this SoC is) it has to be cleared here too or the interrupt
+	 * re-fires forever.  hfi_venus.c does the same. */
+	if (intr_status)
+		writel(intr_status, core->reg_base + WRAPPER_INTR_CLEAR);
 }
 
 int iris_vpu_watchdog(struct iris_core *core, u32 intr_status)
@@ -217,41 +240,19 @@ skip_power_off:
 
 int iris_vpu_power_off_controller(struct iris_core *core)
 {
-	u32 val = 0;
-	int ret;
-
-	writel(MSK_SIGNAL_FROM_TENSILICA | MSK_CORE_POWER_ON, core->reg_base + CPU_CS_X2RPMH);
-
-	writel(REQ_POWER_DOWN_PREP, core->reg_base + AON_WRAPPER_MVP_NOC_LPI_CONTROL);
-
-	ret = readl_poll_timeout(core->reg_base + AON_WRAPPER_MVP_NOC_LPI_STATUS,
-				 val, val & BIT(0), 200, 2000);
-	if (ret)
-		goto disable_power;
-
-	writel(REQ_POWER_DOWN_PREP, core->reg_base + WRAPPER_IRIS_CPU_NOC_LPI_CONTROL);
-
-	ret = readl_poll_timeout(core->reg_base + WRAPPER_IRIS_CPU_NOC_LPI_STATUS,
-				 val, val & BIT(0), 200, 2000);
-	if (ret)
-		goto disable_power;
-
-	writel(0x0, core->reg_base + WRAPPER_DEBUG_BRIDGE_LPI_CONTROL);
-
-	ret = readl_poll_timeout(core->reg_base + WRAPPER_DEBUG_BRIDGE_LPI_STATUS,
-				 val, val == 0, 200, 2000);
-	if (ret)
-		goto disable_power;
-
-	writel(CTL_AXI_CLK_HALT | CTL_CLK_HALT,
-	       core->reg_base + WRAPPER_TZ_CTL_AXI_CLOCK_CONFIG);
-	writel(RESET_HIGH, core->reg_base + WRAPPER_TZ_QNS4PDXFIFO_RESET);
-	writel(0x0, core->reg_base + WRAPPER_TZ_QNS4PDXFIFO_RESET);
-	writel(0x0, core->reg_base + WRAPPER_TZ_CTL_AXI_CLOCK_CONFIG);
-
-disable_power:
+	/*
+	 * DEBUG BUILD: the LPI/NOC handshakes that used to be here touch VPU
+	 * registers.  When core init dies on the *first* register access they run
+	 * in the error path and abort a second time, which is what took the
+	 * machine down and hid the original fault.  Skip them so a failed probe
+	 * is survivable and visible in dmesg.
+	 */
+	dev_err(core->dev, "IRIS-TRACE: power_off_controller: VPU MMIO skipped\n");
 	iris_disable_unprepare_clock(core, IRIS_CTRL_CLK);
+	iris_disable_unprepare_clock(core, IRIS_AXI1_CLK);
+	iris_disable_unprepare_clock(core, IRIS_AXIC_CLK);
 	iris_disable_unprepare_clock(core, IRIS_AXI_CLK);
+	iris_disable_unprepare_clock(core, IRIS_AHB_CLK);
 	iris_disable_power_domains(core, core->pmdomain_tbl->pd_devs[IRIS_CTRL_POWER_DOMAIN]);
 
 	return 0;
@@ -284,21 +285,47 @@ int iris_vpu_power_on_controller(struct iris_core *core)
 	if (ret)
 		return ret;
 
+	/* The vendor PIL enables "ahb" (VIDEO_CC_IRIS_AHB_CLK) as a proxy clock
+	 * before the secure auth; without it TZ's register writes to the
+	 * wrapper wedge the bus.  Enabling it through the clock framework also
+	 * runs the shared RCG update handshake for its parent. */
+	ret = iris_prepare_enable_clock(core, IRIS_AHB_CLK);
+	if (ret && ret != -EINVAL)
+		dev_err(core->dev, "IRIS-TRACE: ahb clock failed %d\n", ret);
+	dev_err(core->dev, "IRIS-TRACE: ahb clock ret=%d\n", ret);
+
 	ret = reset_control_bulk_reset(rst_tbl_size, core->resets);
 	if (ret)
 		goto err_disable_power;
 
+	/* SC8180X has a separate AXI config-port clock (the port a CPU register
+	 * access uses) and a second AXI clock.  Other platforms do not have
+	 * them, so -EINVAL from a missing clock is not an error. */
+	ret = iris_prepare_enable_clock(core, IRIS_AXIC_CLK);
+	if (ret && ret != -EINVAL) {
+		dev_err(core->dev, "IRIS-TRACE: axic clock failed %d\n", ret);
+		goto err_disable_power;
+	}
+	dev_err(core->dev, "IRIS-TRACE: axic clock ret=%d\n", ret);
+
 	ret = iris_prepare_enable_clock(core, IRIS_AXI_CLK);
 	if (ret)
-		goto err_disable_power;
+		goto err_disable_axic;
+
+	ret = iris_prepare_enable_clock(core, IRIS_AXI1_CLK);
+	if (ret && ret != -EINVAL)
+		dev_err(core->dev, "IRIS-TRACE: axi1 clock failed %d\n", ret);
 
 	ret = iris_prepare_enable_clock(core, IRIS_CTRL_CLK);
 	if (ret)
-		goto err_disable_clock;
+		goto err_disable_axi1;
 
 	return 0;
 
-err_disable_clock:
+err_disable_axi1:
+	iris_disable_unprepare_clock(core, IRIS_AXI1_CLK);
+err_disable_axic:
+	iris_disable_unprepare_clock(core, IRIS_AXIC_CLK);
 	iris_disable_unprepare_clock(core, IRIS_AXI_CLK);
 err_disable_power:
 	iris_disable_power_domains(core, core->pmdomain_tbl->pd_devs[IRIS_CTRL_POWER_DOMAIN]);
@@ -341,10 +368,12 @@ int iris_vpu_power_on(struct iris_core *core)
 	if (ret)
 		goto err;
 
+	dev_err(core->dev, "IRIS-TRACE: power_on: controller (pds/clocks/resets)\n");
 	ret = core->iris_platform_data->vpu_ops->power_on_controller(core);
 	if (ret)
 		goto err_unvote_icc;
 
+	dev_err(core->dev, "IRIS-TRACE: power_on: hw (vcodec0 pd/clk)\n");
 	ret = core->iris_platform_data->vpu_ops->power_on_hw(core);
 	if (ret)
 		goto err_power_off_ctrl;
@@ -352,13 +381,20 @@ int iris_vpu_power_on(struct iris_core *core)
 	freq = core->power.clk_freq ? core->power.clk_freq :
 				      (u32)ULONG_MAX;
 
+	dev_err(core->dev, "IRIS-TRACE: power_on: opp set_rate(%u)\n", freq);
 	dev_pm_opp_set_rate(core->dev, freq);
+	dev_err(core->dev, "IRIS-TRACE: power_on: opp done\n");
 
+	dev_err(core->dev, "IRIS-TRACE: power_on: preset regs (first VPU write)\n");
 	core->iris_platform_data->set_preset_registers(core);
+	dev_err(core->dev, "IRIS-TRACE: power_on: preset regs done\n");
 
+	dev_err(core->dev, "IRIS-TRACE: power_on: intr mask (VPU read)\n");
 	iris_vpu_interrupt_init(core);
+	dev_err(core->dev, "IRIS-TRACE: power_on: intr init done\n");
 	core->intr_status = 0;
 	enable_irq(core->irq);
+	dev_err(core->dev, "IRIS-TRACE: power_on: irq enabled\n");
 
 	return 0;
 
