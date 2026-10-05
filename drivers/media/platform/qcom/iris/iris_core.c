@@ -34,9 +34,13 @@ static int iris_wait_for_system_response(struct iris_core *core)
 	if (core->state == IRIS_CORE_ERROR)
 		return -EIO;
 
-	ret = wait_for_completion_timeout(&core->core_init_done,
-					  msecs_to_jiffies(hw_response_timeout_val));
-	if (!ret) {
+	/*
+	 * DEBUG: iris_vpu_wait_for_core_init() polls instead of sleeping on the
+	 * completion, so that the last readable register state before a
+	 * firmware-induced death is on the console.
+	 */
+	ret = iris_vpu_wait_for_core_init(core, hw_response_timeout_val);
+	if (ret) {
 		core->state = IRIS_CORE_ERROR;
 		return -ETIMEDOUT;
 	}

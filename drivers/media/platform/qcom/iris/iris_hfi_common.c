@@ -100,16 +100,49 @@ irqreturn_t iris_hfi_isr(int irq, void *data)
 irqreturn_t iris_hfi_isr_handler(int irq, void *data)
 {
 	struct iris_core *core = data;
+	unsigned long now = jiffies;
+	static unsigned long last;
+	static u32 burst;
+	bool storm;
 
 	if (!core)
 		return IRQ_NONE;
+
+	/*
+	 * DEBUG: count the interrupt rate.  The wrapper's A2H line is level
+	 * based on the firmware having something in the message queue, so a
+	 * driver that never drains it re-enters this handler forever and the
+	 * board hangs until the hardware watchdog resets it - which is the
+	 * shape the probe ended in (intr_status=0x6, then silence, then a
+	 * reset).  Noticing the burst and leaving the interrupt disabled turns
+	 * that into a survivable failure with a full log.
+	 */
+	if (time_before(now, last + msecs_to_jiffies(50)))
+		burst++;
+	else
+		burst = 0;
+	last = now;
+	storm = burst > 100;
+
+	iris_vpu_trace_isr(core, "entry");
 
 	mutex_lock(&core->lock);
 	pm_runtime_mark_last_busy(core->dev);
 	iris_vpu_clear_interrupt(core);
 	mutex_unlock(&core->lock);
 
+	iris_vpu_trace_isr(core, "cleared");
+
 	core->hfi_response_ops->hfi_response_handler(core);
+
+	iris_vpu_trace_isr(core, "done");
+
+	if (storm) {
+		dev_err(core->dev,
+			"IRIS-TRACE: isr storm: %u interrupts with <50 ms gaps - leaving the IRQ disabled so the machine survives\n",
+			burst);
+		return IRQ_HANDLED;
+	}
 
 	if (!iris_vpu_watchdog(core, core->intr_status))
 		enable_irq(irq);

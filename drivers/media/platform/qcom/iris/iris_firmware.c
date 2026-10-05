@@ -59,6 +59,18 @@ static unsigned long long iris_fw_size_override;
 module_param_named(fw_size, iris_fw_size_override, ullong, 0644);
 MODULE_PARM_DESC(fw_size, "IRIS debug: override firmware carve-out size");
 
+/*
+ * DEBUG: bisect "the firmware alone wedges the machine" against "our first
+ * register access after the core is released does".  With this set, nothing
+ * touches the VPU for half the interval right after qcom_scm_pas_auth_and_reset()
+ * succeeds; then one register snapshot; then the other half.  If the log never
+ * reaches "hold 1/2 survived" the core's own execution is what takes the bus
+ * down and no amount of driver-side register work will help.
+ */
+static unsigned int iris_hold_after_auth_ms;
+module_param_named(hold_after_auth_ms, iris_hold_after_auth_ms, uint, 0644);
+MODULE_PARM_DESC(hold_after_auth_ms, "IRIS debug: after PAS auth, wait this long touching no VPU register");
+
 static u32 iris_pas_id(struct iris_core *core)
 {
 	return iris_pas_id_override ? iris_pas_id_override
@@ -173,6 +185,19 @@ int iris_fw_load(struct iris_core *core)
 	if (ret)  {
 		dev_err(core->dev, "auth and reset failed: %d\n", ret);
 		return ret;
+	}
+
+	if (iris_hold_after_auth_ms) {
+		unsigned int half = iris_hold_after_auth_ms / 2;
+
+		dev_err(core->dev,
+			"IRIS-TRACE: hold: %u ms with no VPU register access at all\n",
+			iris_hold_after_auth_ms);
+		msleep(half);
+		dev_err(core->dev, "IRIS-TRACE: hold 1/2 survived, first register snapshot now\n");
+		iris_vpu_trace_isr(core, "hold-read");
+		msleep(half);
+		dev_err(core->dev, "IRIS-TRACE: hold 2/2 survived, continuing\n");
 	}
 
 	dev_err(core->dev, "IRIS-TRACE: mem protect video var (SCM call)\n");

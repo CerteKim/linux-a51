@@ -100,6 +100,8 @@ struct iris_core {
 	dma_addr_t				sfr_daddr;
 	void					*iface_q_table_vaddr;
 	void					*sfr_vaddr;
+	/* size of the single allocation UC_REGION_ADDR/SIZE point at */
+	u32					uc_region_size;
 	struct iris_iface_q_info		command_queue;
 	struct iris_iface_q_info		message_queue;
 	struct iris_iface_q_info		debug_queue;

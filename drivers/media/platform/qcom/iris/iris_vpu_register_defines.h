@@ -21,6 +21,29 @@
 
 #define WRAPPER_CORE_POWER_STATUS		(WRAPPER_BASE_OFFS + 0x80)
 
+/* Wrapper hardware revision, decoded the way the downstream driver does
+ * (vidc_hfi_io.h): major 31:28, minor 23:16, step 15:0.  Reading it answers
+ * whether this core really is the "Iris v2.xx" the sm8250 binding describes,
+ * given that its firmware string is VIDEO.IR.1.2. */
+#define WRAPPER_HW_VERSION			(WRAPPER_BASE_OFFS + 0x00)
+#define WRAPPER_HW_VERSION_MAJOR_MASK		0x78000000
+#define WRAPPER_HW_VERSION_MAJOR_SHIFT		28
+#define WRAPPER_HW_VERSION_MINOR_MASK		0x0fff0000
+#define WRAPPER_HW_VERSION_MINOR_SHIFT		16
+#define WRAPPER_HW_VERSION_STEP_MASK		0x0000ffff
+
+/* VCODEC core0 NoC error block (vendor vidc_hfi_io.h: vidc base + 0x4000, with
+ * the CVP core's copy at + 0xC000).  It lives inside this node's window, and a
+ * NoC error raised by the VPU is what a "reset from below Linux" looks like:
+ * ERRVLD is the sticky logged-error bit, ERRCLR acknowledges it, ERRLOG0 is
+ * the first log word. */
+#define VCODEC_CORE0_VIDEO_NOC_BASE_OFFS	0x00004000
+#define VCODEC_CVP_NOC_BASE_OFFS		0x0000c000
+#define VCODEC_NOC_ERR_ERRVLD_LOW_OFFS		0x0510
+#define VCODEC_NOC_ERR_ERRCLR_LOW_OFFS		0x0518
+#define VCODEC_NOC_ERR_ERRLOG0_LOW_OFFS		0x0520
+#define VCODEC_NOC_ERR_ERRLOG0_HIGH_OFFS	0x0524
+
 /* Firmware/CP address window the core is booted from.  hfi_venus.c's
  * venus_reset_cpu() writes these (same offsets in both maps) before the
  * secure auth releases the core; with them zeroed the core fetches from

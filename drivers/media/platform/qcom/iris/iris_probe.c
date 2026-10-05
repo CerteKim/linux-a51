@@ -15,6 +15,26 @@
 #include "iris_ctrls.h"
 #include "iris_vidc.h"
 
+/*
+ * DEBUG: the platform data's dma_mask bounds the IOVAs the DMA/IOMMU layer
+ * hands out, and it is why the firmware's UC region lands at 0xdfc00000 - the
+ * top of the 0xe0000000 window.  That matters here, because this board's own
+ * ACPI manifest (the GPU0 "PAGETABLES" package) splits the video banks by
+ * address:
+ *
+ *	VideoNonSecurePT	0x00100000 + 0xBFF00000 -> 0x00100000..0xBFFFFFFF
+ *	VideoSecurePT1..4	0xC0000000 / 0xD0000000 / 0xE0000000 / 0xF0000000,
+ *				256 MB each
+ *
+ * while the region the firmware is told to use sits at 0xdfc00000, inside the
+ * *secure* banks' half.  Set this to an exclusive upper bound (e.g. 0xC0000000)
+ * to force every video IOVA below the secure windows; 0 keeps the platform
+ * data's value.
+ */
+static unsigned int iris_dma_mask_limit;
+module_param_named(dma_mask_limit, iris_dma_mask_limit, uint, 0644);
+MODULE_PARM_DESC(dma_mask_limit, "IRIS debug: exclusive upper bound for video IOVAs (0 = platform default)");
+
 static int iris_init_icc(struct iris_core *core)
 {
 	const struct icc_info *icc_tbl;
@@ -280,6 +300,12 @@ static int iris_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, core);
 
 	dma_mask = core->iris_platform_data->dma_mask;
+	if (iris_dma_mask_limit)
+		dma_mask = (u64)iris_dma_mask_limit - 1;
+
+	dev_err(core->dev, "IRIS-TRACE: dma_mask=%#llx (platform %#llx, limit %#x)\n",
+		dma_mask, (u64)core->iris_platform_data->dma_mask,
+		iris_dma_mask_limit);
 
 	ret = dma_set_mask_and_coherent(dev, dma_mask);
 	if (ret)

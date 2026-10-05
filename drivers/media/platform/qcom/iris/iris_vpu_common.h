@@ -23,6 +23,8 @@ struct vpu_ops {
 };
 
 int iris_vpu_boot_firmware(struct iris_core *core);
+int iris_vpu_wait_for_core_init(struct iris_core *core, u32 timeout_ms);
+void iris_vpu_trace_isr(struct iris_core *core, const char *tag);
 void iris_vpu_raise_interrupt(struct iris_core *core);
 void iris_vpu_clear_interrupt(struct iris_core *core);
 int iris_vpu_watchdog(struct iris_core *core, u32 intr_status);

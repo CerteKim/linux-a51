@@ -250,23 +250,30 @@ int iris_hfi_queues_init(struct iris_core *core)
 
 	/* Iris hardware requires 4K queue alignment */
 	queue_size = ALIGN((sizeof(*q_tbl_hdr) + (IFACEQ_QUEUE_SIZE * IFACEQ_NUMQ)), SZ_4K);
-	core->iface_q_table_vaddr = dma_alloc_attrs(core->dev, queue_size,
+
+	/*
+	 * One allocation for the whole UC region the firmware is told about.
+	 * It used to be two - the queue table, then the SFR separately - while
+	 * the driver programmed UC_REGION_SIZE as ALIGN(SFR_SIZE + queue_size,
+	 * SZ_1M), i.e. it advertised roughly half a megabyte of IOVA past the
+	 * end of the queue table as part of the region.  The vendor driver for
+	 * this SoC sizes its queue block to fill the region up to the SFR and
+	 * QDSS blocks (SHARED_QSIZE = ALIGN(SFR + QUEUE + QDSS, SZ_1M)), so the
+	 * whole advertised region is mapped.  Do the same: queues first, SFR at
+	 * the end of the same 1M-aligned block.
+	 */
+	core->uc_region_size = ALIGN(SFR_SIZE + queue_size, SZ_1M);
+	core->iface_q_table_vaddr = dma_alloc_attrs(core->dev, core->uc_region_size,
 						    &core->iface_q_table_daddr,
 						    GFP_KERNEL, DMA_ATTR_WRITE_COMBINE);
 	if (!core->iface_q_table_vaddr) {
-		dev_err(core->dev, "queues alloc and map failed\n");
+		dev_err(core->dev, "uc region alloc and map failed\n");
 		return -ENOMEM;
 	}
 
-	core->sfr_vaddr = dma_alloc_attrs(core->dev, SFR_SIZE,
-					  &core->sfr_daddr,
-					  GFP_KERNEL, DMA_ATTR_WRITE_COMBINE);
-	if (!core->sfr_vaddr) {
-		dev_err(core->dev, "sfr alloc and map failed\n");
-		dma_free_attrs(core->dev, sizeof(*q_tbl_hdr), core->iface_q_table_vaddr,
-			       core->iface_q_table_daddr, DMA_ATTR_WRITE_COMBINE);
-		return -ENOMEM;
-	}
+	core->sfr_daddr = core->iface_q_table_daddr + core->uc_region_size - SFR_SIZE;
+	core->sfr_vaddr = (void *)((char *)core->iface_q_table_vaddr +
+				   core->uc_region_size - SFR_SIZE);
 
 	iris_hfi_queue_init(core, IFACEQ_CMDQ_ID, &core->command_queue);
 	iris_hfi_queue_init(core, IFACEQ_MSGQ_ID, &core->message_queue);
@@ -291,8 +298,6 @@ int iris_hfi_queues_init(struct iris_core *core)
 
 void iris_hfi_queues_deinit(struct iris_core *core)
 {
-	u32 queue_size;
-
 	if (!core->iface_q_table_vaddr)
 		return;
 
@@ -300,18 +305,14 @@ void iris_hfi_queues_deinit(struct iris_core *core)
 	iris_hfi_queue_deinit(&core->message_queue);
 	iris_hfi_queue_deinit(&core->command_queue);
 
-	dma_free_attrs(core->dev, SFR_SIZE, core->sfr_vaddr,
-		       core->sfr_daddr, DMA_ATTR_WRITE_COMBINE);
-
+	/* the SFR lives inside the UC region allocation, not beside it */
 	core->sfr_vaddr = NULL;
 	core->sfr_daddr = 0;
 
-	queue_size = ALIGN(sizeof(struct iris_hfi_queue_table_header) +
-		(IFACEQ_QUEUE_SIZE * IFACEQ_NUMQ), SZ_4K);
-
-	dma_free_attrs(core->dev, queue_size, core->iface_q_table_vaddr,
+	dma_free_attrs(core->dev, core->uc_region_size, core->iface_q_table_vaddr,
 		       core->iface_q_table_daddr, DMA_ATTR_WRITE_COMBINE);
 
 	core->iface_q_table_vaddr = NULL;
 	core->iface_q_table_daddr = 0;
+	core->uc_region_size = 0;
 }
