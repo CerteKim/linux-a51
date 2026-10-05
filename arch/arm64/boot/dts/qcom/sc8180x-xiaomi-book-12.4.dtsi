@@ -1095,6 +1095,17 @@
 	bluetooth {
 		compatible = "qcom,wcn3998-bt";
 
+		/* The controller is not provisioned with an address (no OTP and
+		 * nothing in secure world), so it boots with the placeholder
+		 * from the generic qca/crnv21.bin NVM and btqca leaves it
+		 * HCI_UNCONFIGURED, which keeps it out of the mgmt index list.
+		 * Give it a synthetic one; the kernel programs it into the chip
+		 * during every setup.  Little-endian, per
+		 * bindings/net/bluetooth/bluetooth-controller.yaml:
+		 * 14:16:9E:CE:AD:60
+		 */
+		local-bd-address = [60 ad ce 9e 16 14];
+
 		vddio-supply = <&vreg_s4a_1p8>;
 		vddxo-supply = <&vreg_l7a_1p8>;
 		vddrf-supply = <&vreg_l9a_1p3>;
