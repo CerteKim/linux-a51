@@ -573,22 +573,26 @@ static int sdm845_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	struct snd_interval *channels = hw_param_interval(params,
 					SNDRV_PCM_HW_PARAM_CHANNELS);
 	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
-	struct sdm845_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
-	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 
 	rate->min = rate->max = DEFAULT_SAMPLE_RATE_48K;
 	channels->min = channels->max = 2;
 	snd_mask_none(fmt);
 
 	/*
-	 * Windows SC8180X ACDB declares the built-in speaker topology as
-	 * DeviceID 0x45, 48 kHz, 24-bit.  Keep the generic sdm845 behavior for
-	 * all other devices and backends.
+	 * S16_LE, i.e. the generic sdm845 behaviour.
+	 *
+	 * This used to pin SLIMBUS_0_RX to S24_LE for the Xiaomi Book 12.4 on
+	 * the strength of the Windows ACDB declaring the built-in speaker
+	 * topology as 48 kHz/24-bit.  That reading is wrong end to end:
+	 * measured with the WCD934x RX digital volume held at a fixed +20 dB,
+	 * an S16_LE front end is clearly audible while an S24_LE one is not,
+	 * so the S24_LE path throws away 20-48 dB -- one byte of
+	 * misalignment.  PipeWire picks S24_LE from the advertised
+	 * constraints, so every player ended up on the quiet path, and the
+	 * only way to get sound out was to push the RX digital volume to its
+	 * +40 dB maximum, which then clipped on loud material.
 	 */
-	if (data->xiaomi_book_12_4 && cpu_dai->id == SLIMBUS_0_RX)
-		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S24_LE);
-	else
-		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
+	snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
 
 	return 0;
 }
