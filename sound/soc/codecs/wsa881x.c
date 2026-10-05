@@ -914,9 +914,24 @@ static int wsa881x_spkr_pa_event(struct snd_soc_dapm_widget *w,
 {
 	struct snd_soc_component *comp = snd_soc_dapm_to_component(w->dapm);
 	struct wsa881x_priv *wsa881x = snd_soc_component_get_drvdata(comp);
+	unsigned int pa_gain;
+	int ret;
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
+		/*
+		 * wsa881x_pre_pmu_pa_2_0[] leaves SPKR_DRV_GAIN at its power-on
+		 * value, which silently throws away the "PA Volume" setting on
+		 * every playback start: the mixer cache keeps reporting what
+		 * was asked for, but the hardware runs at the sequence default
+		 * (12 dB) instead.  Save the gain and put it back before the PA
+		 * is actually enabled.
+		 */
+		ret = regmap_read(wsa881x->regmap, WSA881X_SPKR_DRV_GAIN,
+				  &pa_gain);
+		if (ret)
+			return ret;
+
 		snd_soc_component_update_bits(comp, WSA881X_SPKR_OCP_CTL,
 					      WSA881X_SPKR_OCP_MASK,
 					      WSA881X_SPKR_OCP_EN);
@@ -926,6 +941,16 @@ static int wsa881x_spkr_pa_event(struct snd_soc_dapm_widget *w,
 		snd_soc_component_update_bits(comp, WSA881X_SPKR_DRV_GAIN,
 					      WSA881X_PA_GAIN_SEL_MASK,
 					      WSA881X_PA_GAIN_SEL_REG);
+
+		/*
+		 * Restore the requested gain.  Only the gain field is touched,
+		 * so the control bits the sequence just programmed are kept.
+		 * The PA is still off here, so the stepped ramp that
+		 * wsa881x_put_pa_gain() needs is not required.
+		 */
+		snd_soc_component_update_bits(comp, WSA881X_SPKR_DRV_GAIN,
+					      WSA881X_SPKR_PAG_GAIN_MASK,
+					      pa_gain & WSA881X_SPKR_PAG_GAIN_MASK);
 		break;
 	case SND_SOC_DAPM_POST_PMU:
 		if (wsa881x->port_prepared[WSA881X_PORT_VISENSE]) {
