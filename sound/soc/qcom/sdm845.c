@@ -328,6 +328,25 @@ static int sdm845_dai_init(struct snd_soc_pcm_runtime *rtd)
 		if (pdata->slim_port_setup || !link->no_pcm)
 			return 0;
 
+		if (pdata->xiaomi_book_12_4) {
+			/*
+			 * The WCD934x RX digital volumes are signed dB
+			 * controls: raw 0 is -84 dB, raw 84 is 0 dB and raw
+			 * 124 is +40 dB.  The UCM exposes them as the speaker
+			 * and headphone playback volumes, so without a limit the
+			 * desktop mixer -- or an /var/lib/alsa/asound.state
+			 * carried over from earlier tinkering -- drives the
+			 * codec 40 dB past full scale, which squares off
+			 * everything it receives long before it gets any
+			 * louder.  Cap both paths at 0 dB, the same way
+			 * sc8280xp.c caps the WSA macro volumes.
+			 */
+			snd_soc_limit_volume(card, "RX1 Digital Volume", 84);
+			snd_soc_limit_volume(card, "RX2 Digital Volume", 84);
+			snd_soc_limit_volume(card, "RX7 Digital Volume", 84);
+			snd_soc_limit_volume(card, "RX8 Digital Volume", 84);
+		}
+
 		for_each_rtd_codec_dais(rtd, i, codec_dai) {
 			rval = snd_soc_dai_set_channel_map(codec_dai,
 							  ARRAY_SIZE(sdm845_wcd934x_tx_ch),
