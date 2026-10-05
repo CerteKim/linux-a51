@@ -4,6 +4,7 @@
  */
 
 #include <dt-bindings/sound/qcom,q6afe.h>
+#include <dt-bindings/sound/qcom,q6asm.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
@@ -584,6 +585,45 @@ static int sdm845_snd_hw_free(struct snd_pcm_substream *substream)
 	return 0;
 }
 
+/*
+ * The ADSP only preserves the level on the WCD9340 SLIMbus playback backends
+ * when the *front end* is 16-bit.  Measured on the Xiaomi Book 12.4 with the
+ * codec gain held fixed, the same -12 dBFS tone played straight to hw:0,0:
+ *
+ *   front end S16_LE -> clearly audible
+ *   front end S24_LE -> 20-48 dB down, inaudible at 0 dB
+ *
+ * Pinning the backend (sdm845_be_hw_params_fixup) is not enough on its own:
+ * the front ends advertise S16/S24/S32 and ACP picks S24_LE from that, so
+ * every player still landed on the quiet path.  Narrow the front end too.
+ * Playback only -- the capture direction has its own, separate quirk.
+ */
+static int sdm845_fe_startup(struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct sdm845_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+
+	if (!data->xiaomi_book_12_4 ||
+	    substream->stream != SNDRV_PCM_STREAM_PLAYBACK)
+		return 0;
+
+	switch (cpu_dai->id) {
+	case MSM_FRONTEND_DAI_MULTIMEDIA1 ... MSM_FRONTEND_DAI_MULTIMEDIA8:
+		break;
+	default:
+		return 0;
+	}
+
+	return snd_pcm_hw_constraint_mask64(substream->runtime,
+					    SNDRV_PCM_HW_PARAM_FORMAT,
+					    1ULL << SNDRV_PCM_FORMAT_S16_LE);
+}
+
+static const struct snd_soc_ops sdm845_fe_ops = {
+	.startup = sdm845_fe_startup,
+};
+
 static const struct snd_soc_ops sdm845_be_ops = {
 	.hw_params = sdm845_snd_hw_params,
 	.hw_free = sdm845_snd_hw_free,
@@ -646,6 +686,8 @@ static void sdm845_add_ops(struct snd_soc_card *card)
 		if (link->no_pcm == 1) {
 			link->ops = &sdm845_be_ops;
 			link->be_hw_params_fixup = sdm845_be_hw_params_fixup;
+		} else {
+			link->ops = &sdm845_fe_ops;
 		}
 		link->init = sdm845_dai_init;
 	}
