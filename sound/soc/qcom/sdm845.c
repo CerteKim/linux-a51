@@ -328,6 +328,33 @@ static int sdm845_dai_init(struct snd_soc_pcm_runtime *rtd)
 		if (pdata->slim_port_setup || !link->no_pcm)
 			return 0;
 
+		if (pdata->xiaomi_book_12_4) {
+			/*
+			 * The WCD934x RX digital volumes are signed dB controls:
+			 * raw 0 is -84 dB, raw 84 is 0 dB and raw 124 is +40 dB,
+			 * and the UCM exposes them as the speaker and headphone
+			 * playback volumes.  With the backend format fixed (see
+			 * sdm845_be_hw_params_fixup) the signal arrives at full
+			 * scale, so 0 dB is the correct maximum and everything
+			 * above it is pure overdrive -- the desktop mixer, or a
+			 * stale /var/lib/alsa/asound.state, would otherwise be
+			 * able to square off whatever the codec receives.
+			 * sc8280xp.c caps the WSA macro volumes for the same
+			 * reason.
+			 *
+			 * The signed-to-unsigned offset means the limit is
+			 * expressed in the same 0..124 space userspace sees, so
+			 * 84 is exactly 0 dB.  Do not add this before the format
+			 * is right: while SLIMBUS_0_RX was pinned to S24_LE the
+			 * path was 20-48 dB down and needed the full +40 dB, and
+			 * capping it at 0 dB made the speakers completely silent.
+			 */
+			snd_soc_limit_volume(card, "RX1 Digital Volume", 84);
+			snd_soc_limit_volume(card, "RX2 Digital Volume", 84);
+			snd_soc_limit_volume(card, "RX7 Digital Volume", 84);
+			snd_soc_limit_volume(card, "RX8 Digital Volume", 84);
+		}
+
 		for_each_rtd_codec_dais(rtd, i, codec_dai) {
 			rval = snd_soc_dai_set_channel_map(codec_dai,
 							  ARRAY_SIZE(sdm845_wcd934x_tx_ch),
