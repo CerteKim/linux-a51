@@ -96,6 +96,10 @@ int qcom_scm_assign_mem(phys_addr_t mem_addr, size_t mem_sz, u64 *src,
 			const struct qcom_scm_vmperm *newvm,
 			unsigned int dest_cnt);
 
+/* project-local debug: issue an arbitrary SCM call (SC8180X VPU bring-up) */
+int qcom_scm_debug_call(u32 svc, u32 cmd, u32 owner, u32 arginfo,
+			const u64 *args, unsigned int nargs, u64 *result);
+
 bool qcom_scm_ocmem_lock_available(void);
 int qcom_scm_ocmem_lock(enum qcom_scm_ocmem_client id, u32 offset, u32 size,
 			u32 mode);

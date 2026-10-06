@@ -1128,6 +1128,51 @@ int qcom_scm_assign_mem(phys_addr_t mem_addr, size_t mem_sz,
 EXPORT_SYMBOL_GPL(qcom_scm_assign_mem);
 
 /**
+ * qcom_scm_debug_call() - issue an arbitrary SCM call.  [project-local debug]
+ * @svc:     service id; it is combined with @owner and @cmd into the SMC
+ *           function id as (owner << 24) | (svc << 8) | cmd
+ * @cmd:     command id
+ * @owner:   ARM SMCCC owner, e.g. ARM_SMCCC_OWNER_SIP
+ * @arginfo: QCOM_SCM_ARGS() metadata
+ * @args:    the arguments
+ * @nargs:   how many of @args to pass
+ * @result:  optional, receives the result registers
+ *
+ * This exists because the SC8180X video bring-up needs to try SIP/PIL commands
+ * that mainline has no wrapper for - PIL/0xb ("share subsystem memory", the one
+ * step of the Windows PIL sequence that is neither implemented here nor
+ * intercepted by the Windows VTL1 SK extension).  It goes through the normal
+ * qcom_scm_call() path, so the SMC convention and quirks are handled as usual.
+ * Nothing calls it unless a debug module parameter asks for it.
+ */
+int qcom_scm_debug_call(u32 svc, u32 cmd, u32 owner, u32 arginfo,
+			const u64 *args, unsigned int nargs, u64 *result)
+{
+	struct qcom_scm_desc desc = {
+		.svc = svc,
+		.cmd = cmd,
+		.owner = owner,
+		.arginfo = arginfo,
+	};
+	struct qcom_scm_res res = {};
+	unsigned int i;
+	int ret;
+
+	if (!__scm || nargs > MAX_QCOM_SCM_ARGS)
+		return -EINVAL;
+
+	for (i = 0; i < nargs; i++)
+		desc.args[i] = args[i];
+
+	ret = qcom_scm_call(__scm->dev, &desc, &res);
+	if (result)
+		memcpy(result, res.result, sizeof(res.result));
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(qcom_scm_debug_call);
+
+/**
  * qcom_scm_ocmem_lock_available() - is OCMEM lock/unlock interface available
  */
 bool qcom_scm_ocmem_lock_available(void)
