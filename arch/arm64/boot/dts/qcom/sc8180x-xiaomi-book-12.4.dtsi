@@ -652,35 +652,48 @@
 };
 
 &i2c7 {
-	clock-frequency = <1000000>;
+	/*
+	 * The platform firmware declares 400 kHz for this bus (the ACPI
+	 * descriptor uses 0x00061A80).  1 MHz makes it marginal: broad
+	 * i2cdetect sweeps on the charger below produce "Bus arbitration
+	 * lost, clock line undriveable".
+	 */
+	clock-frequency = <400000>;
 
 	pinctrl-0 = <&i2c7_active>;
 	pinctrl-names = "default";
 
 	status = "okay";
 
-    // Charger
-    // Device (SXB), Method _CRS
-    // No driver is provided for this device currently
-    /*
-    txra9530@3b {
-        compatible = "wingtech,txra9530";
-        reg = <0x3b>;
+	/*
+	 * Renesas RA9530 stylus charger (ACPI Device (SXB), _HID "TXRA9530").
+	 *
+	 * No pinctrl-0 is needed: the firmware already leaves all five pins
+	 * muxed as plain GPIOs with the right bias and drive settings, and the
+	 * driver takes them over through gpiod.
+	 */
+	pen_charger: charger@3b {
+		compatible = "renesas,ra9530";
+		reg = <0x3b>;
 
-        interrupt-parent = <&tlmm>;
-        interrupts-extended = <&tlmm 101 IRQ_TYPE_LEVEL_LOW>,
-                             <&tlmm 189 IRQ_TYPE_EDGE_LOW>,
-                             <&tlmm 97 IRQ_TYPE_EDGE_LOW>;
+		/* external switch and 7 V boost; firmware leaves both on */
+		switch-gpios = <&tlmm 11 GPIO_ACTIVE_HIGH>;
+		boost-gpios = <&tlmm 186 GPIO_ACTIVE_HIGH>;
 
-        gpios = <&tlmm 11 GPIO_ACTIVE_LOW>,
-                <&tlmm 186 GPIO_ACTIVE_LOW>;
+		/*
+		 * Two hall sensors; the stylus is attached while they differ.
+		 * Measured on this board: gpio97 is low with the pen attached,
+		 * gpio189 stays high.
+		 */
+		pen-detect-gpios = <&tlmm 97 GPIO_ACTIVE_LOW>,
+				   <&tlmm 189 GPIO_ACTIVE_LOW>;
 
-        pinctrl-0 = <&txra9530_int_default>;
-        pinctrl-names = "default";
+		/* chip interrupt, open drain, active low */
+		interrupt-parent = <&tlmm>;
+		interrupts = <101 IRQ_TYPE_EDGE_FALLING>;
 
-        status = "okay";
-    };
-    */
+		renesas,fod-mw = <500>;
+	};
 };
 
 /*
