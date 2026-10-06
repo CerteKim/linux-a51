@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 /*
- * Xiaomi Book S 12.4 (SC8180X / SC8180XP) — standard device tree.
+ * Xiaomi Book S 12.4 (SC8180X / SC8180XP).
  *
- * The board content lives in sc8180x-xiaomi-book-12.4.dtsi so that the
- * overclocked GPU variant (sc8180x-xiaomi-book-12.4-oc.dts) can share it.
+ * The board content lives in sc8180x-xiaomi-book-12.4.dtsi.  An "oc" variant
+ * used to share it through a second .dts, but the GPU DVFS states it carried
+ * are the ones the vendor firmware on this machine uses and they are the
+ * default here now (see 5788790523d5), so a second device tree would describe
+ * exactly the same hardware.
  */
 
 /dts-v1/;
