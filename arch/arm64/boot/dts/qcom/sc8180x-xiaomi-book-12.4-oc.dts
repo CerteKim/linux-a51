@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: BSD-3-Clause
+/*
+ * Xiaomi Book S 12.4 (SC8180X / SC8180XP) — "oc" device tree.
+ *
+ * The name is historical and misleading: this is not an overclock.  The GPU
+ * DVFS states in the shared .dtsi are the ones the vendor firmware on this
+ * machine uses (530/595/670 MHz), which 5788790523d5 ("make the higher GPU
+ * DVFS states the default") made the default for the plain device tree too,
+ * so this variant currently builds exactly the same tree.
+ *
+ * It exists for two reasons: the local GRUB entries boot this file name, and
+ * keeping the board content in the .dtsi lets the two DTBs diverge again if
+ * the default ever goes back to the conservative GPU states.  Building it here
+ * means it follows every change to the board description instead of having to
+ * be copied over by hand.
+ */
+
+/dts-v1/;
+
+#include "sc8180x-xiaomi-book-12.4.dtsi"
