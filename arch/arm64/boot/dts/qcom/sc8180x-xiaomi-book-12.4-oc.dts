@@ -2,17 +2,20 @@
 /*
  * Xiaomi Book S 12.4 (SC8180X / SC8180XP) — "oc" device tree.
  *
- * The name is historical and misleading: this is not an overclock.  The GPU
- * DVFS states in the shared .dtsi are the ones the vendor firmware on this
- * machine uses (530/595/670 MHz), which 5788790523d5 ("make the higher GPU
- * DVFS states the default") made the default for the plain device tree too,
- * so this variant currently builds exactly the same tree.
+ * The name is historical and does not describe what it is: this is not an
+ * overclock.  The GPU DVFS states in the shared .dtsi are the ones the vendor
+ * firmware on this machine uses (530/595/670 MHz), and 5788790523d5 ("make the
+ * higher GPU DVFS states the default") made those the default for the plain
+ * device tree too, so both build exactly the same tree today.
  *
- * It exists for two reasons: the local GRUB entries boot this file name, and
- * keeping the board content in the .dtsi lets the two DTBs diverge again if
- * the default ever goes back to the conservative GPU states.  Building it here
- * means it follows every change to the board description instead of having to
- * be copied over by hand.
+ * The name still matters because the local GRUB entries boot it, and until now
+ * it was produced by copying the plain DTB over it: both the kernel package and
+ * tools/install-dtb-from-tree.sh install the built .dtb under this name (and
+ * under "-parked").  Building it here makes it a real target of the shared
+ * .dtsi, so it follows the board description on its own instead of depending on
+ * that copy — and the split is in place should the two ever need to differ
+ * again, for instance if the default goes back to the conservative GPU states
+ * while this one keeps the vendor ones.
  */
 
 /dts-v1/;
