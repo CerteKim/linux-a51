@@ -139,6 +139,8 @@
 #define MAX_FIFO_RD_RETRY					3
 #define SWR_OVERFLOW_RETRY_COUNT				30
 #define SWRM_LINK_STATUS_RETRY_CNT				100
+/* Bound on re-reading SWRM_REG_INTERRUPT_STATUS in the IRQ handler. */
+#define SWRM_IRQ_MAX_LOOPS					16
 
 enum {
 	MASTER_ID_WSA = 1,
@@ -189,6 +191,14 @@ struct qcom_swrm_ctrl {
 	struct completion enumeration;
 	/* Port alloc/free lock */
 	struct mutex port_lock;
+	/*
+	 * An AHB register access is an address-write/data-read pair over the
+	 * codec's SLIMbus regmap.  Those two transactions are only atomic with
+	 * respect to each other if nobody writes the address register in
+	 * between, and the threaded IRQ handler runs concurrently with the ASoC
+	 * paths, so the pair needs a lock of its own.
+	 */
+	struct mutex reg_lock;
 	struct clk *hclk;
 	int irq;
 	unsigned int version;
@@ -281,40 +291,49 @@ static int qcom_swrm_ahb_reg_read(struct qcom_swrm_ctrl *ctrl, int reg,
 				  u32 *val)
 {
 	struct regmap *wcd_regmap = ctrl->regmap;
-	int ret;
+	int ret = SDW_CMD_FAIL;
+
+	mutex_lock(&ctrl->reg_lock);
 
 	/* pg register + offset */
-	ret = regmap_bulk_write(wcd_regmap, SWRM_AHB_BRIDGE_RD_ADDR_0,
-			  (u8 *)&reg, 4);
-	if (ret < 0)
-		return SDW_CMD_FAIL;
+	if (regmap_bulk_write(wcd_regmap, SWRM_AHB_BRIDGE_RD_ADDR_0,
+			      (u8 *)&reg, 4))
+		goto out;
 
-	ret = regmap_bulk_read(wcd_regmap, SWRM_AHB_BRIDGE_RD_DATA_0,
-			       val, 4);
-	if (ret < 0)
-		return SDW_CMD_FAIL;
+	if (regmap_bulk_read(wcd_regmap, SWRM_AHB_BRIDGE_RD_DATA_0,
+			     val, 4))
+		goto out;
 
-	return SDW_CMD_OK;
+	ret = SDW_CMD_OK;
+out:
+	mutex_unlock(&ctrl->reg_lock);
+
+	return ret;
 }
 
 static int qcom_swrm_ahb_reg_write(struct qcom_swrm_ctrl *ctrl,
 				   int reg, int val)
 {
 	struct regmap *wcd_regmap = ctrl->regmap;
-	int ret;
+	int ret = SDW_CMD_FAIL;
+
+	mutex_lock(&ctrl->reg_lock);
+
 	/* pg register + offset */
-	ret = regmap_bulk_write(wcd_regmap, SWRM_AHB_BRIDGE_WR_DATA_0,
-			  (u8 *)&val, 4);
-	if (ret)
-		return SDW_CMD_FAIL;
+	if (regmap_bulk_write(wcd_regmap, SWRM_AHB_BRIDGE_WR_DATA_0,
+			      (u8 *)&val, 4))
+		goto out;
 
 	/* write address register */
-	ret = regmap_bulk_write(wcd_regmap, SWRM_AHB_BRIDGE_WR_ADDR_0,
-			  (u8 *)&reg, 4);
-	if (ret)
-		return SDW_CMD_FAIL;
+	if (regmap_bulk_write(wcd_regmap, SWRM_AHB_BRIDGE_WR_ADDR_0,
+			      (u8 *)&reg, 4))
+		goto out;
 
-	return SDW_CMD_OK;
+	ret = SDW_CMD_OK;
+out:
+	mutex_unlock(&ctrl->reg_lock);
+
+	return ret;
 }
 
 static int qcom_swrm_cpu_reg_read(struct qcom_swrm_ctrl *ctrl, int reg,
@@ -393,12 +412,16 @@ static int swrm_wait_for_wr_fifo_avail(struct qcom_swrm_ctrl *ctrl)
 		usleep_range(500, 510);
 	} while (fifo_retry_count--);
 
-	if (fifo_outstanding_cmds == ctrl->wr_fifo_depth) {
-		dev_err_ratelimited(ctrl->dev, "%s err write overflow\n", __func__);
-		return -EIO;
-	}
+	/*
+	 * The loop above only returns early when it saw room.  Reaching here
+	 * means the FIFO still reads as full, or that its depth never came back
+	 * from the hardware (in which case "count < depth" is never true).  Fail
+	 * closed: the old "return 0" let the caller push a command into a FIFO
+	 * that was never confirmed to have room.
+	 */
+	dev_err_ratelimited(ctrl->dev, "%s err write overflow\n", __func__);
 
-	return 0;
+	return -EIO;
 }
 
 static bool swrm_wait_for_wr_fifo_done(struct qcom_swrm_ctrl *ctrl)
@@ -487,7 +510,8 @@ static int qcom_swrm_cmd_fifo_rd_cmd(struct qcom_swrm_ctrl *ctrl,
 	 * Check for outstanding cmd wrt. write fifo depth to avoid
 	 * overflow as read will also increase write fifo cnt.
 	 */
-	swrm_wait_for_wr_fifo_avail(ctrl);
+	if (swrm_wait_for_wr_fifo_avail(ctrl))
+		return SDW_CMD_FAIL_OTHER;
 
 	/* wait for FIFO RD to complete to avoid overflow */
 	usleep_range(100, 105);
@@ -525,15 +549,31 @@ static int qcom_swrm_cmd_fifo_rd_cmd(struct qcom_swrm_ctrl *ctrl,
 		dev_num: 0x%x, cmd_data: 0x%x\n",
 		reg_addr, ctrl->rcmd_id, dev_addr, cmd_data);
 
+	/*
+	 * Leave the read FIFO empty: a mismatched response left in place
+	 * desynchronises every later read, and the next command would consume
+	 * this stale word instead of its own answer.
+	 */
+	ctrl->reg_write(ctrl, SWRM_CMD_FIFO_CMD, SWRM_CMD_FIFO_FLUSH);
+
 	return SDW_CMD_IGNORED;
 }
 
 static int qcom_swrm_get_alert_slave_dev_num(struct qcom_swrm_ctrl *ctrl)
 {
-	u32 val, status;
-	int dev_num;
+	u32 val = 0, status;
+	int dev_num, ret;
 
-	ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &val);
+	ret = ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &val);
+	if (ret) {
+		/*
+		 * Without this the loop below walks whatever was on the stack,
+		 * which can mark a still-attached slave as alerting.
+		 */
+		dev_err_ratelimited(ctrl->dev, "%s: slave status read failed: %d\n",
+				    __func__, ret);
+		return -EIO;
+	}
 
 	for (dev_num = 1; dev_num <= SDW_MAX_DEVICES; dev_num++) {
 		status = (val >> (dev_num * SWRM_MCP_SLV_STATUS_SZ));
@@ -549,10 +589,22 @@ static int qcom_swrm_get_alert_slave_dev_num(struct qcom_swrm_ctrl *ctrl)
 
 static void qcom_swrm_get_device_status(struct qcom_swrm_ctrl *ctrl)
 {
-	u32 val;
-	int i;
+	u32 val = 0;
+	int i, ret;
 
-	ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &val);
+	ret = ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &val);
+	if (ret) {
+		/*
+		 * Keep the previous statuses.  Filling ctrl->status[] from a
+		 * failed read hands sdw_handle_slave_status() garbage, which it
+		 * turns into a detach of a slave that is still on the bus (the
+		 * "state check1: UNATTACHED, status was N" cycle).
+		 */
+		dev_err_ratelimited(ctrl->dev, "%s: slave status read failed: %d\n",
+				    __func__, ret);
+		return;
+	}
+
 	ctrl->slave_status = val;
 
 	for (i = 1; i <= SDW_MAX_DEVICES; i++) {
@@ -568,9 +620,11 @@ static void qcom_swrm_set_slave_dev_num(struct sdw_bus *bus,
 					struct sdw_slave *slave, int devnum)
 {
 	struct qcom_swrm_ctrl *ctrl = to_qcom_sdw(bus);
-	u32 status;
+	u32 status = 0;
 
-	ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &status);
+	if (ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &status))
+		return;
+
 	status = (status >> (devnum * SWRM_MCP_SLV_STATUS_SZ));
 	status &= SWRM_MCP_SLV_STATUS_MASK;
 
@@ -588,7 +642,7 @@ static int qcom_swrm_enumerate(struct sdw_bus *bus)
 	struct qcom_swrm_ctrl *ctrl = to_qcom_sdw(bus);
 	struct sdw_slave *slave, *_s;
 	struct sdw_slave_id id;
-	u32 val1, val2;
+	u32 val1 = 0, val2 = 0;
 	bool found;
 	u64 addr;
 	int i;
@@ -600,10 +654,12 @@ static int qcom_swrm_enumerate(struct sdw_bus *bus)
 			continue;
 
 		/*SCP_Devid5 - Devid 4*/
-		ctrl->reg_read(ctrl, SWRM_ENUMERATOR_SLAVE_DEV_ID_1(i), &val1);
+		if (ctrl->reg_read(ctrl, SWRM_ENUMERATOR_SLAVE_DEV_ID_1(i), &val1))
+			continue;
 
 		/*SCP_Devid3 - DevId 2 Devid 1 Devid 0*/
-		ctrl->reg_read(ctrl, SWRM_ENUMERATOR_SLAVE_DEV_ID_2(i), &val2);
+		if (ctrl->reg_read(ctrl, SWRM_ENUMERATOR_SLAVE_DEV_ID_2(i), &val2))
+			continue;
 
 		if (!val1 && !val2)
 			break;
@@ -665,14 +721,21 @@ static irqreturn_t qcom_swrm_wake_irq_handler(int irq, void *dev_id)
 static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
 {
 	struct qcom_swrm_ctrl *ctrl = dev_id;
-	u32 value, intr_sts, intr_sts_masked, slave_status;
+	u32 value, intr_sts = 0, intr_sts_masked, slave_status = 0;
 	u32 i;
 	int devnum;
 	int ret = IRQ_HANDLED;
+	int loops = 0;
 	clk_prepare_enable(ctrl->hclk);
 
-	ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_STATUS],
-		       &intr_sts);
+	if (ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_STATUS],
+			   &intr_sts)) {
+		dev_err_ratelimited(ctrl->dev, "%s: interrupt status read failed\n",
+				    __func__);
+		clk_disable_unprepare(ctrl->hclk);
+		return IRQ_NONE;
+	}
+
 	intr_sts_masked = intr_sts & ctrl->intr_mask;
 
 	do {
@@ -695,7 +758,13 @@ static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
 			case SWRM_INTERRUPT_STATUS_NEW_SLAVE_ATTACHED:
 			case SWRM_INTERRUPT_STATUS_CHANGE_ENUM_SLAVE_STATUS:
 				dev_dbg_ratelimited(ctrl->dev, "SWR new slave attached\n");
-				ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS, &slave_status);
+				if (ctrl->reg_read(ctrl, SWRM_MCP_SLV_STATUS,
+						   &slave_status)) {
+					dev_err_ratelimited(ctrl->dev,
+							    "%s: slave status read failed\n",
+							    __func__);
+					break;
+				}
 				if (ctrl->slave_status == slave_status) {
 					dev_dbg(ctrl->dev, "Slave status not changed %x\n",
 						slave_status);
@@ -747,6 +816,19 @@ static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
 					"%s: SWR CMD error, fifo status 0x%x, flushing fifo\n",
 					__func__, value);
 				ctrl->reg_write(ctrl, SWRM_CMD_FIFO_CMD, 0x1);
+
+				/*
+				 * A command can only fail like this if the bus
+				 * stopped executing it, so report the one bit that
+				 * separates a stray command from a dead link.
+				 */
+				if (!ctrl->reg_read(ctrl,
+						    ctrl->reg_layout[SWRM_REG_FRAME_GEN_ENABLED],
+						    &value) &&
+				    !(value & SWRM_FRM_GEN_ENABLED))
+					dev_err_ratelimited(ctrl->dev,
+							    "%s: frame generator is not enabled\n",
+							    __func__);
 				break;
 			case SWRM_INTERRUPT_STATUS_DOUT_PORT_COLLISION:
 				dev_err_ratelimited(ctrl->dev,
@@ -797,9 +879,24 @@ static irqreturn_t qcom_swrm_irq_handler(int irq, void *dev_id)
 		}
 		ctrl->reg_write(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_CLEAR],
 				intr_sts);
-		ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_STATUS],
-			       &intr_sts);
+		if (ctrl->reg_read(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_STATUS],
+				   &intr_sts))
+			break;
 		intr_sts_masked = intr_sts & ctrl->intr_mask;
+
+		/*
+		 * Bound the loop.  A source that has been masked out of
+		 * intr_mask but still asserts (the codec can keep a sticky
+		 * source set) used to make this spin until it went away on its
+		 * own, which is what turned one bus clash into a 68-second
+		 * storm of slave-side messages.
+		 */
+		if (++loops >= SWRM_IRQ_MAX_LOOPS) {
+			dev_err_ratelimited(ctrl->dev,
+					    "%s: interrupt storm, stopping after %d loops\n",
+					    __func__, loops);
+			break;
+		}
 	} while (intr_sts_masked);
 
 	clk_disable_unprepare(ctrl->hclk);
@@ -829,6 +926,7 @@ static bool swrm_wait_for_frame_gen_enabled(struct qcom_swrm_ctrl *ctrl)
 static int qcom_swrm_init(struct qcom_swrm_ctrl *ctrl)
 {
 	u32 val;
+	int i;
 
 	/* Clear Rows and Cols */
 	val = FIELD_PREP(SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK, ctrl->rows_index);
@@ -848,9 +946,11 @@ static int qcom_swrm_init(struct qcom_swrm_ctrl *ctrl)
 				SWRM_INTERRUPT_STATUS_RMSK);
 
 	/* Configure No pings */
-	ctrl->reg_read(ctrl, SWRM_MCP_CFG_ADDR, &val);
-	u32p_replace_bits(&val, SWRM_DEF_CMD_NO_PINGS, SWRM_MCP_CFG_MAX_NUM_OF_CMD_NO_PINGS_BMSK);
-	ctrl->reg_write(ctrl, SWRM_MCP_CFG_ADDR, val);
+	if (!ctrl->reg_read(ctrl, SWRM_MCP_CFG_ADDR, &val)) {
+		u32p_replace_bits(&val, SWRM_DEF_CMD_NO_PINGS,
+				  SWRM_MCP_CFG_MAX_NUM_OF_CMD_NO_PINGS_BMSK);
+		ctrl->reg_write(ctrl, SWRM_MCP_CFG_ADDR, val);
+	}
 
 	if (ctrl->version == SWRM_VERSION_1_7_0) {
 		ctrl->reg_write(ctrl, SWRM_LINK_MANAGER_EE, SWRM_EE_CPU);
@@ -897,9 +997,25 @@ static int qcom_swrm_init(struct qcom_swrm_ctrl *ctrl)
 
 	swrm_wait_for_frame_gen_enabled(ctrl);
 	ctrl->slave_status = 0;
-	ctrl->reg_read(ctrl, SWRM_COMP_PARAMS, &val);
-	ctrl->rd_fifo_depth = FIELD_GET(SWRM_COMP_PARAMS_RD_FIFO_DEPTH, val);
-	ctrl->wr_fifo_depth = FIELD_GET(SWRM_COMP_PARAMS_WR_FIFO_DEPTH, val);
+
+	/*
+	 * The FIFO depths gate every command, so never derive them from a
+	 * failed read: retry, then keep the last known-good values.  A zero
+	 * depth defeats the room check in swrm_wait_for_wr_fifo_avail().
+	 */
+	for (i = 0; i < SWR_OVERFLOW_RETRY_COUNT; i++) {
+		if (!ctrl->reg_read(ctrl, SWRM_COMP_PARAMS, &val)) {
+			ctrl->rd_fifo_depth = FIELD_GET(SWRM_COMP_PARAMS_RD_FIFO_DEPTH, val);
+			ctrl->wr_fifo_depth = FIELD_GET(SWRM_COMP_PARAMS_WR_FIFO_DEPTH, val);
+			break;
+		}
+		usleep_range(500, 510);
+	}
+
+	if (i == SWR_OVERFLOW_RETRY_COUNT)
+		dev_err_ratelimited(ctrl->dev,
+				    "%s: FIFO depth read failed, keeping rd %u wr %u\n",
+				    __func__, ctrl->rd_fifo_depth, ctrl->wr_fifo_depth);
 
 	return 0;
 }
@@ -912,6 +1028,14 @@ static int qcom_swrm_read_prop(struct sdw_bus *bus)
 		bus->multi_link = true;
 		bus->hw_sync_min_links = 3;
 	}
+
+	/*
+	 * Let the core retry a command: the SLIMbus transport to this master's
+	 * registers can hiccup while the codec re-enumerates itself, and a
+	 * single flaky read used to fail an entire stream setup (and leave the
+	 * amplifier powered with no stream to decode).
+	 */
+	bus->prop.err_threshold = 2;
 
 	return 0;
 }
@@ -951,9 +1075,12 @@ static int qcom_swrm_pre_bank_switch(struct sdw_bus *bus)
 {
 	u32 reg = SWRM_MCP_FRAME_CTRL_BANK_ADDR(bus->params.next_bank);
 	struct qcom_swrm_ctrl *ctrl = to_qcom_sdw(bus);
-	u32 val;
+	u32 val = 0;
+	int ret;
 
-	ctrl->reg_read(ctrl, reg, &val);
+	ret = ctrl->reg_read(ctrl, reg, &val);
+	if (ret)
+		return ret;
 
 	u32p_replace_bits(&val, ctrl->cols_index, SWRM_MCP_FRAME_CTRL_BANK_COL_CTRL_BMSK);
 	u32p_replace_bits(&val, ctrl->rows_index, SWRM_MCP_FRAME_CTRL_BANK_ROW_CTRL_BMSK);
@@ -1045,9 +1172,12 @@ static int qcom_swrm_port_enable(struct sdw_bus *bus,
 {
 	u32 reg = SWRM_DP_PORT_CTRL_BANK(enable_ch->port_num, bank);
 	struct qcom_swrm_ctrl *ctrl = to_qcom_sdw(bus);
-	u32 val;
+	u32 val = 0;
+	int ret;
 
-	ctrl->reg_read(ctrl, reg, &val);
+	ret = ctrl->reg_read(ctrl, reg, &val);
+	if (ret)
+		return ret;
 
 	if (enable_ch->enable)
 		val |= (enable_ch->ch_mask << SWRM_DP_PORT_CTRL_EN_CHAN_SHFT);
@@ -1545,6 +1675,7 @@ static int qcom_swrm_probe(struct platform_device *pdev)
 	ctrl->dev = dev;
 	dev_set_drvdata(&pdev->dev, ctrl);
 	mutex_init(&ctrl->port_lock);
+	mutex_init(&ctrl->reg_lock);
 	init_completion(&ctrl->broadcast);
 	init_completion(&ctrl->enumeration);
 
