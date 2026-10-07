@@ -797,6 +797,13 @@ bool msm_dsi_host_is_wide_bus_enabled(struct mipi_dsi_host *host)
 {
 	struct msm_dsi_host *msm_host = to_msm_dsi_host(host);
 
+	/*
+	 * Video-mode DSC timing is programmed as a 3-byte-per-pclk path.
+	 * Keep wide bus limited to command mode until video timing supports it.
+	 */
+	if (msm_host->mode_flags & MIPI_DSI_MODE_VIDEO)
+		return false;
+
 	return msm_host->dsc &&
 		msm_dsi_host_version_geq(msm_host, MSM_DSI_VER_MAJOR_6G,
 					MSM_DSI_6G_VER_MINOR_V2_5_0);
