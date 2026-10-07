@@ -23,6 +23,7 @@ properties:
       - enum:
           - boe,ppc357db1-4
           - csot,ppc357db1-4
+          - csot,pnc357db1-4
       - const: himax,hx83121a
 
   reg:
@@ -39,6 +40,15 @@ properties:
 
   vddi-supply:
     description: power supply for IC
+
+  vdd1-supply:
+    description: digital core supply for the panel
+
+  vdd-supply:
+    description: panel supply
+
+  bl-supply:
+    description: power supply for backlight, in case it's managed via DSC
 
   backlight: true
   ports: true
