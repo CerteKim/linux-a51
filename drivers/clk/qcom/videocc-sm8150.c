@@ -234,6 +234,15 @@ static const struct qcom_cc_desc video_cc_sm8150_desc = {
 
 static const struct of_device_id video_cc_sm8150_match_table[] = {
 	{ .compatible = "qcom,sm8150-videocc" },
+	/*
+	 * SC8180X shares this VIDEOCC layout (IRIS core clocks, the venus and
+	 * vcodec0 GDSCs and the MVSC reset).  Its device tree has carried the
+	 * "qcom,sc8180x-videocc" compatible since the video clock controller
+	 * node was added, but the driver only ever matched the SM8150 string,
+	 * so nothing bound and the video codec never got its clocks and power
+	 * domains.
+	 */
+	{ .compatible = "qcom,sc8180x-videocc" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, video_cc_sm8150_match_table);
