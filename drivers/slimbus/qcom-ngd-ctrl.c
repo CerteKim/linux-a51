@@ -1280,8 +1280,15 @@ capability_retry:
 			dev_err(ctrl->dev, "unexpected state:%d\n",
 						ctrl->state);
 
-		if (ctrl->state == QCOM_SLIM_NGD_CTRL_DOWN)
-			qcom_slim_ngd_notify_slaves(ctrl);
+		/*
+		 * The first capability (SAT) message can arrive before
+		 * slim_register_controller() has registered the DT child
+		 * devices, in which case there is nothing to resolve a logical
+		 * address for.  Re-run the lookup on every capability message,
+		 * not only on the DOWN transition, so that children registered
+		 * later still get their logical addresses.
+		 */
+		qcom_slim_ngd_notify_slaves(ctrl);
 
 	} else if (ret == -EIO) {
 		dev_err(ctrl->dev, "capability message NACKed, retrying\n");
