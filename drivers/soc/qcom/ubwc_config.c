@@ -57,6 +57,11 @@ static const struct qcom_ubwc_cfg_data ubwc_3_1_hbb14  = {
 	.highest_bank_bit = 14,
 };
 
+static const struct qcom_ubwc_cfg_data ubwc_3_1_hbb15 = {
+	.ubwc_enc_version = UBWC_3_1,
+	.highest_bank_bit = 15,
+};
+
 static const struct qcom_ubwc_cfg_data ubwc_3_1_hbb16  = {
 	.ubwc_enc_version = UBWC_3_1,
 	.highest_bank_bit = 16,
@@ -136,6 +141,8 @@ static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
 	{ .compatible = "qcom,sar2130p", .data = &ubwc_3_1_hbb13 },
 	{ .compatible = "qcom,sc7180", .data = &ubwc_2_0_hbb14, },
 	{ .compatible = "qcom,sc7280", .data = &ubwc_3_1_hbb14, },
+	/* The Xiaomi Book S 12.4 is LPDDR4X (hbb 15), not the LPDDR5 default */
+	{ .compatible = "xiaomi,book-12.4", .data = &ubwc_3_1_hbb15, },
 	{ .compatible = "qcom,sc8180x", .data = &ubwc_3_1_hbb16, },
 	{ .compatible = "qcom,sc8280xp", .data = &ubwc_4_0_hbb16, },
 	{ .compatible = "qcom,sda660", .data = &ubwc_1_0_hbb14 },
