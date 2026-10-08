@@ -1058,6 +1058,8 @@ static void a6xx_hfi_queue_init(struct a6xx_hfi_queue *queue,
 
 void a6xx_hfi_init(struct a6xx_gmu *gmu)
 {
+	struct a6xx_gpu *a6xx_gpu = container_of(gmu, struct a6xx_gpu, gmu);
+	struct adreno_gpu *adreno_gpu = &a6xx_gpu->base;
 	struct a6xx_gmu_bo *hfi = &gmu->hfi;
 	struct a6xx_hfi_queue_table_header *table = hfi->virt;
 	struct a6xx_hfi_queue_header *headers = hfi->virt + sizeof(*table);
@@ -1069,7 +1071,7 @@ void a6xx_hfi_init(struct a6xx_gmu *gmu)
 	 * headers
 	 */
 	table_size = sizeof(*table);
-	table_size += (ARRAY_SIZE(gmu->queues) *
+	table_size += (HFI_MAX_QUEUES *
 		sizeof(struct a6xx_hfi_queue_header));
 
 	table->version = 0;
@@ -1077,8 +1079,6 @@ void a6xx_hfi_init(struct a6xx_gmu *gmu)
 	/* First queue header is located immediately after the table header */
 	table->qhdr0_offset = sizeof(*table) >> 2;
 	table->qhdr_size = sizeof(struct a6xx_hfi_queue_header) >> 2;
-	table->num_queues = ARRAY_SIZE(gmu->queues);
-	table->active_queues = ARRAY_SIZE(gmu->queues);
 
 	/* Command queue */
 	idx = 0;
@@ -1092,11 +1092,24 @@ void a6xx_hfi_init(struct a6xx_gmu *gmu)
 	a6xx_hfi_queue_init(&gmu->queues[idx], &headers[idx], hfi->virt + offset,
 		hfi->iova + offset, gmu->legacy ? 4 : 1);
 
-	/* GMU Debug queue */
-	idx++;
-	offset += SZ_4K;
-	a6xx_hfi_queue_init(&gmu->queues[idx], &headers[idx], hfi->virt + offset,
-		hfi->iova + offset, gmu->legacy ? 5 : 2);
+	/*
+	 * GMU debug queue: the firmware posts its F2H debug messages here and
+	 * the coredump reads them back.  It came in with the A8xx work; the
+	 * older GMU firmware on A6xx parts such as the A680 stops consuming
+	 * HFI messages when a third queue is offered to it, so only register
+	 * the queue where it is known to exist.
+	 */
+	if (adreno_is_a7xx(adreno_gpu) || adreno_is_a8xx(adreno_gpu)) {
+		idx++;
+		offset += SZ_4K;
+		a6xx_hfi_queue_init(&gmu->queues[idx], &headers[idx],
+			hfi->virt + offset, hfi->iova + offset,
+			gmu->legacy ? 5 : 2);
+	}
 
 	WARN_ON(idx >= HFI_MAX_QUEUES);
+
+	/* Advertise only the queues that were actually registered */
+	table->num_queues = idx + 1;
+	table->active_queues = idx + 1;
 }
