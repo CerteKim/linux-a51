@@ -107,6 +107,25 @@ static const struct qcom_ubwc_cfg_data sc8180x_data = {
 	.macrotile_mode = true,
 };
 
+/*
+ * The Xiaomi Book S 12.4 is an SC8180X with LPDDR4X.  sc8180x_data above
+ * carries the highest bank bit for LPDDR5 (16); LPDDR4X needs 15, which is
+ * what a6xx_calc_ubwc_config() used to force for every GPU it had no
+ * specific case for - A680 included - before the driver started trusting
+ * the SSoT entry.  With 16 the GPU's UBWC traffic is swizzled for the
+ * wrong bank layout, and it hangs (GMU watchdog / hangcheck) as soon as a
+ * compositor renders into a compressed buffer; 6.18, which forced 15, runs
+ * the same board happily.
+ */
+static const struct qcom_ubwc_cfg_data xiaomi_book_12_4_data = {
+	.ubwc_enc_version = UBWC_3_0,
+	.ubwc_dec_version = UBWC_3_0,
+	.ubwc_swizzle = UBWC_SWIZZLE_ENABLE_LVL2 |
+			UBWC_SWIZZLE_ENABLE_LVL3,
+	.highest_bank_bit = 15,
+	.macrotile_mode = true,
+};
+
 static const struct qcom_ubwc_cfg_data sc8280xp_data = {
 	.ubwc_enc_version = UBWC_4_0,
 	.ubwc_dec_version = UBWC_4_0,
@@ -268,6 +287,8 @@ static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
 	{ .compatible = "qcom,sar2130p", .data = &sar2130p_data },
 	{ .compatible = "qcom,sc7180", .data = &sc7180_data },
 	{ .compatible = "qcom,sc7280", .data = &sc7280_data, },
+	/* Must come before the generic sc8180x entry (LPDDR4X, not LPDDR5) */
+	{ .compatible = "xiaomi,book-12.4", .data = &xiaomi_book_12_4_data, },
 	{ .compatible = "qcom,sc8180x", .data = &sc8180x_data, },
 	{ .compatible = "qcom,sc8280xp", .data = &sc8280xp_data, },
 	{ .compatible = "qcom,sda660", .data = &msm8937_data },
