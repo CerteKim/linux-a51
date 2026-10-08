@@ -89,7 +89,14 @@ struct dpu_plane {
 };
 
 static const uint64_t supported_format_modifiers[] = {
-	DRM_FORMAT_MOD_QCOM_COMPRESSED,
+	/*
+	 * UBWC (QCOM_COMPRESSED) scanout is not reliable on the SC8180X: as
+	 * soon as a compositor allocates compressed scanout buffers the
+	 * GPU/GMU hangs (HFI_H2F_MSG_GX_BW_PERF_VOTE timeout, GMU watchdog,
+	 * hangcheck recover) and the machine freezes.  The 6.18 bring-up tree
+	 * kept this modifier out of the list as well; keep linear only until
+	 * the UBWC path is verified on this board.
+	 */
 	DRM_FORMAT_MOD_LINEAR,
 	DRM_FORMAT_MOD_INVALID
 };
