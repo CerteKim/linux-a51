@@ -2191,12 +2191,6 @@ static int a6xx_pm_resume(struct msm_gpu *gpu)
 	if (ret)
 		goto err_put_gxpd;
 
-	ret = clk_bulk_prepare_enable(gmu->nr_clocks, gmu->clocks);
-	if (ret) {
-		clk_bulk_disable_unprepare(gpu->nr_clocks, gpu->grp_clks);
-		goto err_put_gxpd;
-	}
-
 	if (adreno_is_a619_holi(adreno_gpu))
 		a6xx_sptprac_enable(gmu);
 
@@ -2269,7 +2263,6 @@ static int a6xx_pm_suspend(struct msm_gpu *gpu)
 		a6xx_sptprac_disable(gmu);
 
 	clk_bulk_disable_unprepare(gpu->nr_clocks, gpu->grp_clks);
-	clk_bulk_disable_unprepare(gmu->nr_clocks, gmu->clocks);
 
 	pm_runtime_put_sync(gmu->gxpd);
 	dev_pm_opp_set_opp(&gpu->pdev->dev, NULL);
