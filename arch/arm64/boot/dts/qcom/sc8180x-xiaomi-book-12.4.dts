@@ -771,7 +771,11 @@
 // Both PCIE2 and PCIE3 is dectected on Windows,
 // Lets enable them.
 
-// FIXME: Unknown Pin for PCIE2
+// PERST# is described by the root port's reset-gpios (the non-deprecated
+// binding).  Do not add the deprecated perst-gpios here as well: the same
+// GPIO referenced from both the host bridge and the root port makes 7.2's
+// gpiolib-shared framework wrap it in a shared-GPIO proxy, which then needs
+// the gpio-shared-proxy module -- not available when the rootfs is on NVMe.
 &pcie2 {
 	interrupts = <GIC_SPI 672 IRQ_TYPE_LEVEL_HIGH>,
 		     <GIC_SPI 671 IRQ_TYPE_LEVEL_HIGH>,
@@ -789,8 +793,6 @@
 			  "msi5",
 			  "msi6",
 			  "msi7";
-
-	perst-gpios = <&tlmm 102 GPIO_ACTIVE_LOW>;
 
 	//wake-gpios = <&tlmm 104 GPIO_ACTIVE_HIGH>;
 
