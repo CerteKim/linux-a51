@@ -644,6 +644,31 @@
 		vddl-supply = <&vreg_l12e_1p8>;
 		post-power-on-delay-ms = <200>;
 
+		/*
+		 * Keep the controller powered across system suspend.
+		 *
+		 * The HIMX1234 does not survive the regulator power cycle the
+		 * driver otherwise performs around suspend: it NAKs
+		 * SET_POWER(SLEEP) on the way down, and once the rails have been
+		 * cut and restored it no longer answers PWR_ON, so
+		 * i2c_hid_core_pm_resume() fails with -ENXIO and the GENI
+		 * controller then times out aborting the transfer.  One such
+		 * resume left the machine hung.
+		 *
+		 * The platform firmware runs this as a sequenced transition: its
+		 * PEP entry for \_SB.TSC1 drives TLMM GPIO 54, waits, votes
+		 * LDO4_C then LDO12_E on, waits another 200 ms and only then
+		 * configures the interrupt pin.  That sequence is not described
+		 * here and the driver does not perform it.
+		 *
+		 * Being a wakeup source makes the driver skip both the
+		 * power-down in i2c_hid_core_suspend() and the power-up in
+		 * i2c_hid_core_resume(), so the controller keeps its state (and
+		 * its supply) while the system is asleep and still answers on
+		 * resume.
+		 */
+		wakeup-source;
+
 		interrupts-extended = <&tlmm 122 IRQ_TYPE_LEVEL_LOW>;
 
 		pinctrl-0 = <&ts_irq_active>;
