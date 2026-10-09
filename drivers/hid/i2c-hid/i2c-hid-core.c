@@ -151,6 +151,17 @@ static const struct i2c_hid_quirks {
 		 I2C_HID_QUIRK_DELAY_WAKEUP_AFTER_RESUME },
 	{ I2C_VENDOR_ID_BLTP, I2C_PRODUCT_ID_BLTP7853,
 		I2C_HID_QUIRK_NO_IRQ_AFTER_RESET },
+	/*
+	 * Himax HIMX1234 in the Xiaomi Book S 12.4 (SC8180X) NAKs
+	 * SET_POWER(SLEEP).  The abort that follows leaves the GENI I2C
+	 * controller unable to complete the next transfers, so the resume
+	 * fails device-side (i2c_hid_core_pm_resume() returns -ENXIO) and the
+	 * bus then times out resetting its RX_FSM.  The devicetree marks the
+	 * device as a wakeup source, so its rails stay on as well and it keeps
+	 * both its state and its supply across suspend.
+	 */
+	{ I2C_VENDOR_ID_HIMAX, I2C_DEVICE_ID_HIMAX_HIMX1234,
+		I2C_HID_QUIRK_NO_SLEEP_ON_SUSPEND },
 	{ 0, 0 }
 };
 
