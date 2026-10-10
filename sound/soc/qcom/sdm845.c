@@ -347,6 +347,25 @@ static int sdm845_dai_init(struct snd_soc_pcm_runtime *rtd)
 			snd_soc_limit_volume(card, "RX2 Digital Volume", 84);
 			snd_soc_limit_volume(card, "RX7 Digital Volume", 84);
 			snd_soc_limit_volume(card, "RX8 Digital Volume", 84);
+
+			/*
+			 * The capture side has exactly the same trap.  "DEC0
+			 * Volume" is the TX digital gain of the capture path
+			 * (DMIC/AMIC -> ADC -> DEC0 -> SLIM TX0 -> MultiMedia2)
+			 * and is likewise signed dB with a +40 dB maximum, so
+			 * WirePlumber maps the source slider's 100% onto
+			 * +40 dB and the ordinary ~45% desktop setting lands at
+			 * +19 dB.  Measured on this machine, the microphone's
+			 * noise floor tracks the control 1:1 in an unchanged
+			 * room: -68.9 dBFS at -20 dB (raw 64), -49.4 dBFS at
+			 * 0 dB (raw 84) and -30.5 dBFS at +19 dB (raw 103) --
+			 * i.e. most of what is audible as constant hiss is
+			 * nothing but digital gain applied to the microphone's
+			 * own noise.  0 dB is plenty for both the internal array
+			 * and a headset (those keep ADC2 Volume for gain), so
+			 * cap it there and let the session only attenuate.
+			 */
+			snd_soc_limit_volume(card, "DEC0 Volume", 84);
 		}
 
 		for_each_rtd_codec_dais(rtd, i, codec_dai) {
