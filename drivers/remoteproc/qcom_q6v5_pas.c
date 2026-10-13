@@ -91,6 +91,7 @@ struct qcom_pas {
 	int crash_reason_smem;
 	unsigned int smem_host_id;
 	bool decrypt_shutdown;
+	bool started_by_ap;
 	const char *info_name;
 
 	const struct firmware *firmware;
@@ -286,6 +287,8 @@ static int qcom_pas_start(struct rproc *rproc)
 	if (ret)
 		return ret;
 
+	pas->started_by_ap = true;
+
 	ret = qcom_pas_pds_enable(pas, pas->proxy_pds, pas->proxy_pd_count);
 	if (ret < 0)
 		goto disable_irqs;
@@ -412,23 +415,32 @@ static int qcom_pas_stop(struct rproc *rproc)
 	if (ret == -ETIMEDOUT)
 		dev_err(pas->dev, "timed out on wait\n");
 
-	ret = qcom_pas_shutdown(pas->pas_id);
-	if (ret && pas->decrypt_shutdown)
-		ret = qcom_pas_shutdown_poll_decrypt(pas);
+	/*
+	 * The PAS shutdown call is a no-op on a remoteproc that this driver
+	 * never started itself. On platforms where the reset is broken it is
+	 * worse than that: the SCM call succeeds but the remoteproc is not
+	 * released (or reset), so skip it and rely on the SMP2P stop bit.
+	 */
+	if (pas->started_by_ap) {
+		ret = qcom_pas_shutdown(pas->pas_id);
+		if (ret && pas->decrypt_shutdown)
+			ret = qcom_pas_shutdown_poll_decrypt(pas);
 
-	if (ret)
-		dev_err(pas->dev, "failed to shutdown: %d\n", ret);
+		if (ret)
+			dev_err(pas->dev, "failed to shutdown: %d\n", ret);
 
-	if (pas->dtb_pas_id) {
-		dtb_ret = qcom_pas_shutdown(pas->dtb_pas_id);
-		if (dtb_ret)
-			dev_err(pas->dev, "failed to shutdown dtb: %d\n", dtb_ret);
+		if (pas->dtb_pas_id) {
+			dtb_ret = qcom_pas_shutdown(pas->dtb_pas_id);
+			if (dtb_ret)
+				dev_err(pas->dev, "failed to shutdown dtb: %d\n", dtb_ret);
 
-		if (!ret && dtb_ret)
-			ret = dtb_ret;
-
-		qcom_pas_unmap_carveout(rproc, pas->dtb_mem_phys, pas->dtb_mem_size);
+			if (!ret && dtb_ret)
+				ret = dtb_ret;
+		}
 	}
+
+	if (pas->dtb_pas_id)
+		qcom_pas_unmap_carveout(rproc, pas->dtb_mem_phys, pas->dtb_mem_size);
 
 	qcom_pas_unmap_carveout(rproc, pas->mem_phys, pas->mem_size);
 
@@ -567,6 +579,10 @@ static int qcom_pas_attach(struct rproc *rproc)
 		goto unroll_attach;
 	}
 
+	ret = qcom_q6v5_attach(&pas->q6v5);
+	if (ret)
+		goto disable_running;
+
 	return 0;
 
 unroll_attach:
@@ -595,11 +611,11 @@ static const struct rproc_ops qcom_pas_ops = {
 	.unprepare = qcom_pas_unprepare,
 	.start = qcom_pas_start,
 	.stop = qcom_pas_stop,
+	.attach = qcom_pas_attach,
 	.da_to_va = qcom_pas_da_to_va,
 	.parse_fw = qcom_pas_parse_firmware,
 	.load = qcom_pas_load,
 	.panic = qcom_pas_panic,
-	.attach = qcom_pas_attach,
 	.coredump = qcom_pas_coredump,
 };
 
@@ -607,12 +623,30 @@ static const struct rproc_ops qcom_pas_minidump_ops = {
 	.unprepare = qcom_pas_unprepare,
 	.start = qcom_pas_start,
 	.stop = qcom_pas_stop,
+	.attach = qcom_pas_attach,
 	.da_to_va = qcom_pas_da_to_va,
 	.parse_fw = qcom_pas_parse_firmware,
 	.load = qcom_pas_load,
 	.panic = qcom_pas_panic,
 	.coredump = qcom_pas_minidump,
+};
+
+/*
+ * On some platforms (e.g. SC8180X running under Linux at EL2, where Qualcomm's
+ * hypervisor is gone) the firmware authentication part of PAS is present but
+ * the reset sequence is triggered by the hypervisor and cannot be reproduced
+ * by Linux. Fingerprinting is impossible: every PAS call still returns success
+ * and the remoteproc simply never leaves reset (qcom_q6v5_wait_for_start()
+ * times out with -ETIMEDOUT). Selecting an ops set without ->start() makes the
+ * driver refuse to try: a remoteproc that is already running during boot can
+ * still be attached to and used, one that is not cannot be started at all.
+ */
+static const struct rproc_ops qcom_pas_ops_no_reset = {
+	.unprepare = qcom_pas_unprepare,
+	.stop = qcom_pas_stop,
 	.attach = qcom_pas_attach,
+	.da_to_va = qcom_pas_da_to_va,
+	.panic = qcom_pas_panic,
 };
 
 static int qcom_pas_init_clock(struct qcom_pas *pas)
@@ -827,7 +861,9 @@ static int qcom_pas_probe(struct platform_device *pdev)
 	const char *fw_name, *dtb_fw_name = NULL;
 	const struct rproc_ops *ops = &qcom_pas_ops;
 	bool needs_tzmem;
+	bool broken_reset;
 	int ret;
+	int i;
 
 	desc = of_device_get_match_data(&pdev->dev);
 	if (!desc)
@@ -852,6 +888,10 @@ static int qcom_pas_probe(struct platform_device *pdev)
 
 	if (desc->minidump_id)
 		ops = &qcom_pas_minidump_ops;
+
+	broken_reset = device_property_read_bool(&pdev->dev, "qcom,broken-reset");
+	if (broken_reset)
+		ops = &qcom_pas_ops_no_reset;
 
 	rproc = devm_rproc_alloc(&pdev->dev, desc->sysmon_name, ops, fw_name, sizeof(*pas));
 
@@ -914,6 +954,46 @@ static int qcom_pas_probe(struct platform_device *pdev)
 	if (ret)
 		goto detach_proxy_pds;
 
+	/*
+	 * Reading the SMP2P state is the best (and only) way to find out
+	 * whether the boot firmware left this remoteproc running. It also
+	 * prints the raw line state of all four SMP2P interrupts so that a
+	 * single boot is enough to tell attaching from "the DSP is down".
+	 *
+	 * Only do this when the reset is known to be broken: without a working
+	 * reset an already running remoteproc can only be attached to and must
+	 * not be started again, but where starting it does work the full
+	 * firmware is the better choice, and a remote that the boot firmware
+	 * only left in a lite-firmware state (the SC8180X SLPI, whose handover
+	 * line asserts during boot) must keep being started normally.
+	 */
+	if (broken_reset) {
+		ret = qcom_q6v5_read_smp2p_state(&pas->q6v5);
+		for (i = 0; ret == -ENODEV && i < 5; i++) {
+			/*
+			 * The SMP2P driver publishes the inbound entries only
+			 * once the remote processor (or the boot firmware on
+			 * its behalf) has done so. If nothing has been
+			 * published yet we cannot tell whether the remoteproc
+			 * is running, and must not conclude that it is down.
+			 * Wait a little and look again; deferring the probe
+			 * would not help here because the smp2p platform
+			 * device is already registered, so -EPROBE_DEFER would
+			 * not necessarily come back.
+			 */
+			msleep(100);
+			ret = qcom_q6v5_read_smp2p_state(&pas->q6v5);
+		}
+	}
+
+	if (broken_reset && rproc->state == RPROC_OFFLINE) {
+		dev_err(&pdev->dev,
+			"reset is broken and the remoteproc is not running during boot, cannot start it - giving up\n");
+		/* Release all resources, but return 0 so we don't block sync_state() */
+		ret = 0;
+		goto deinit_q6v5;
+	}
+
 	qcom_add_glink_subdev(rproc, &pas->glink_subdev, desc->ssr_name);
 	qcom_add_smd_subdev(rproc, &pas->smd_subdev);
 	qcom_add_pdm_subdev(rproc, &pas->pdm_subdev);
@@ -964,12 +1044,19 @@ deinit_remove_pdm_smd_glink:
 	qcom_remove_pdm_subdev(rproc, &pas->pdm_subdev);
 	qcom_remove_smd_subdev(rproc, &pas->smd_subdev);
 	qcom_remove_glink_subdev(rproc, &pas->glink_subdev);
+deinit_q6v5:
 	qcom_q6v5_deinit(&pas->q6v5);
 detach_proxy_pds:
 	qcom_pas_pds_detach(pas, pas->proxy_pds, pas->proxy_pd_count);
 unassign_mem:
 	qcom_pas_unassign_memory_region(pas);
 free_rproc:
+	/*
+	 * The probe can now succeed without ever registering the remoteproc
+	 * (broken reset and the DSP is not running). Make sure ->remove()
+	 * does not touch it in that case.
+	 */
+	pas->rproc = NULL;
 	device_init_wakeup(pas->dev, false);
 
 	return ret;
@@ -978,6 +1065,9 @@ free_rproc:
 static void qcom_pas_remove(struct platform_device *pdev)
 {
 	struct qcom_pas *pas = platform_get_drvdata(pdev);
+
+	if (!pas->rproc)
+		return;
 
 	if (pas->bam_dmux)
 		of_platform_device_destroy(&pas->bam_dmux->dev, NULL);
