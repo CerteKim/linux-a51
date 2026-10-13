@@ -278,6 +278,61 @@ unsigned long qcom_q6v5_panic(struct qcom_q6v5 *q6v5)
 EXPORT_SYMBOL_GPL(qcom_q6v5_panic);
 
 /**
+ * qcom_q6v5_read_smp2p_state() - check the initial state during boot using SMP2P
+ * @q6v5:	reference to qcom_q6v5 context
+ *
+ * Read the current state of the SMP2P interrupts and attempt to determine if
+ * the remoteproc is already running. If yes, the remoteproc state is set to
+ * RPROC_DETACHED. Drivers can use this to add support for attaching to
+ * remoteprocs during boot.
+ *
+ * This doubles as the diagnostic for such platforms: the raw line state of
+ * every SMP2P interrupt and the return value of irq_get_irqchip_state() is
+ * printed with dev_info(), so a single boot tells us whether the boot firmware
+ * left the remoteproc running (-> attach works) or not. Note that
+ * irq_get_irqchip_state() returns -ENODEV while the remote processor has not
+ * published its inbound SMEM entries yet, in which case no conclusion can be
+ * drawn from the line state.
+ *
+ * There is a small chance for false-positives, so drivers should combine this
+ * with device-specific status information if possible.
+ *
+ * Return: 0 if the state could be read, -ENODEV if at least one of the SMP2P
+ *	   interrupts has no remote state yet.
+ */
+int qcom_q6v5_read_smp2p_state(struct qcom_q6v5 *q6v5)
+{
+	static const char * const names[] = { "ready", "handover", "fatal", "stop-ack" };
+	bool state[4] = { false, false, false, false };
+	int irq[4];
+	int ret[4];
+	int i;
+
+	irq[0] = q6v5->ready_irq;
+	irq[1] = q6v5->handover_irq;
+	irq[2] = q6v5->fatal_irq;
+	irq[3] = q6v5->stop_irq;
+
+	for (i = 0; i < ARRAY_SIZE(irq); i++) {
+		ret[i] = irq_get_irqchip_state(irq[i], IRQCHIP_STATE_LINE_LEVEL,
+					       &state[i]);
+
+		dev_info(q6v5->dev, "SMP2P %-8s irq %3d state %d (irq_get_irqchip_state %d)\n",
+			 names[i], irq[i], ret[i] ? -1 : state[i], ret[i]);
+	}
+
+	for (i = 0; i < ARRAY_SIZE(irq); i++)
+		if (ret[i] == -ENODEV)
+			return -ENODEV;
+
+	if (state[0] && state[1] && !state[3] && !state[2])
+		q6v5->rproc->state = RPROC_DETACHED;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(qcom_q6v5_read_smp2p_state);
+
+/**
  * qcom_q6v5_init() - initializer of the q6v5 common struct
  * @q6v5:	handle to be initialized
  * @pdev:	platform_device reference for acquiring resources
