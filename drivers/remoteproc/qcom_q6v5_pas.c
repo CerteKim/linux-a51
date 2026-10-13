@@ -737,6 +737,7 @@ static int qcom_pas_probe(struct platform_device *pdev)
 	struct rproc *rproc;
 	const char *fw_name, *dtb_fw_name = NULL;
 	const struct rproc_ops *ops = &qcom_pas_ops;
+	bool needs_tzmem;
 	int ret;
 
 	desc = of_device_get_match_data(&pdev->dev);
@@ -850,8 +851,22 @@ static int qcom_pas_probe(struct platform_device *pdev)
 		goto remove_ssr_sysmon;
 	}
 
-	pas->pas_ctx->use_tzmem = rproc->has_iommu;
-	pas->dtb_pas_ctx->use_tzmem = rproc->has_iommu;
+	/*
+	 * The PAS metadata blob and the firmware memory region have to be
+	 * bridged to the secure world.  Normally the firmware (hypervisor)
+	 * creates these SHM bridges on behalf of Linux, which is also why the
+	 * TZMem allocator must not be used in that case: passing a buffer that
+	 * is already part of an SHM bridge makes the PAS call fail.
+	 *
+	 * When Linux runs in EL2 there is no hypervisor left to do it, so the
+	 * bridges have to be created by Linux itself.  Platforms where this is
+	 * necessary (and where the SHM bridge is available) say so with
+	 * "qcom,needs-tzmem", usually from an EL2 device tree overlay.
+	 */
+	needs_tzmem = rproc->has_iommu ||
+		      device_property_read_bool(pas->dev, "qcom,needs-tzmem");
+	pas->pas_ctx->use_tzmem = needs_tzmem;
+	pas->dtb_pas_ctx->use_tzmem = needs_tzmem;
 	ret = rproc_add(rproc);
 	if (ret)
 		goto remove_ssr_sysmon;

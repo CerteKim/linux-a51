@@ -55,6 +55,14 @@ properties:
     minItems: 1
     maxItems: 3
 
+  qcom,needs-tzmem:
+    type: boolean
+    description:
+      The PAS metadata blob and the firmware memory region have to be bridged
+      to the secure world by Linux itself, because the firmware that normally
+      creates these SHM bridges on behalf of Linux is not present (for example
+      when Linux runs in EL2 instead of under a hypervisor).
+
   qcom,smem-states:
     $ref: /schemas/types.yaml#/definitions/phandle-array
     description: States used by the AP to signal the Hexagon core
