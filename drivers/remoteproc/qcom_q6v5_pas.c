@@ -12,6 +12,7 @@
 #include <linux/firmware.h>
 #include <linux/interrupt.h>
 #include <linux/iommu.h>
+#include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -33,6 +34,18 @@
 #include "qcom_pil_info.h"
 #include "qcom_q6v5.h"
 #include "remoteproc_internal.h"
+
+/* LPASS QDSP6SS register offsets, same block as qcom_q6v5_adsp.c */
+#define QDSP6SS_RST_EVB_REG		0x10
+#define QDSP6SS_CORE_CBCR		0x20
+#define QDSP6SS_XO_CBCR			0x38
+#define QDSP6SS_SLEEP_CBCR		0x3c
+#define QDSP6SS_CORE_START_REG		0x400
+#define QDSP6SS_BOOT_CMD_REG		0x404
+#define QDSP6SS_BOOT_STATUS_REG		0x408
+
+#define LPASS_BOOT_CORE_START		BIT(0)
+#define LPASS_BOOT_CMD_START		BIT(0)
 
 #define QCOM_PAS_DECRYPT_SHUTDOWN_DELAY_MS	100
 
@@ -71,6 +84,15 @@ struct qcom_pas {
 	struct rproc *rproc;
 
 	struct qcom_q6v5 q6v5;
+
+	/*
+	 * LPASS QDSP6SS registers, used to release the remoteproc from reset
+	 * ourselves when the hypervisor that normally does it is gone (EL2).
+	 * Offsets match drivers/remoteproc/qcom_q6v5_adsp.c; the sc8180x ADSP
+	 * node maps exactly that register block.
+	 */
+	void __iomem *qdsp6ss_base;
+	bool qdsp6ss_start;
 
 	struct clk *xo;
 	struct clk *aggre2_clk;
@@ -342,6 +364,32 @@ static int qcom_pas_start(struct rproc *rproc)
 		dev_err(pas->dev,
 			"failed to authenticate image and release reset\n");
 		goto unmap_carveout;
+	}
+
+	if (pas->qdsp6ss_start) {
+		u32 val;
+
+		/*
+		 * Authentication is done, but nobody released the DSP from
+		 * reset: the hypervisor that does that in EL1 is gone. Do it
+		 * through the QDSP6SS block instead.
+		 */
+		writel(1, pas->qdsp6ss_base + QDSP6SS_XO_CBCR);
+		writel(1, pas->qdsp6ss_base + QDSP6SS_SLEEP_CBCR);
+		writel(1, pas->qdsp6ss_base + QDSP6SS_CORE_CBCR);
+
+		writel(pas->mem_phys >> 4, pas->qdsp6ss_base + QDSP6SS_RST_EVB_REG);
+		writel(LPASS_BOOT_CORE_START, pas->qdsp6ss_base + QDSP6SS_CORE_START_REG);
+		writel(LPASS_BOOT_CMD_START, pas->qdsp6ss_base + QDSP6SS_BOOT_CMD_REG);
+
+		ret = readl_poll_timeout(pas->qdsp6ss_base + QDSP6SS_BOOT_STATUS_REG,
+					 val, val & BIT(0), 10, 10000);
+		dev_info(pas->dev,
+			 "QDSP6SS: RST_EVB=0x%08x BOOT_STATUS=0x%08x (%s), CORE_CBCR=0x%08x\n",
+			 readl(pas->qdsp6ss_base + QDSP6SS_RST_EVB_REG),
+			 readl(pas->qdsp6ss_base + QDSP6SS_BOOT_STATUS_REG),
+			 ret ? "boot FSM timeout" : "core running",
+			 readl(pas->qdsp6ss_base + QDSP6SS_CORE_CBCR));
 	}
 
 	ret = qcom_q6v5_wait_for_start(&pas->q6v5, msecs_to_jiffies(5000));
@@ -935,6 +983,37 @@ static int qcom_pas_probe(struct platform_device *pdev)
 	ret = qcom_pas_assign_memory_region(pas);
 	if (ret)
 		goto free_rproc;
+
+	/*
+	 * With the hypervisor replaced (slbounce / EL2) the PAS calls only
+	 * authenticate the firmware; releasing the DSP from reset is part of
+	 * the hypervisor's job and it is gone. "qcom,qdsp6ss-start" (set only
+	 * from the EL2 overlay) makes us do that part ourselves, the way
+	 * qcom_q6v5_adsp.c does it for the SoCs whose ADSP is not PAS based.
+	 *
+	 * The register block is dumped first: if the XPU does not allow the
+	 * access this is where it shows up, before anything is written.
+	 */
+	if (of_property_read_bool(pdev->dev.of_node, "qcom,qdsp6ss-start")) {
+		pas->qdsp6ss_base = devm_platform_ioremap_resource(pdev, 0);
+		if (IS_ERR(pas->qdsp6ss_base)) {
+			ret = PTR_ERR(pas->qdsp6ss_base);
+			dev_err(&pdev->dev, "failed to map the QDSP6SS registers: %d\n", ret);
+			goto unassign_mem;
+		}
+
+		pas->qdsp6ss_start = true;
+		dev_info(&pdev->dev,
+			 "QDSP6SS: RST_EVB=0x%08x CORE_CBCR=0x%08x XO_CBCR=0x%08x SLEEP_CBCR=0x%08x CORE_START=0x%08x BOOT_CMD=0x%08x BOOT_STATUS=0x%08x (mem 0x%pa+0x%zx)\n",
+			 readl(pas->qdsp6ss_base + QDSP6SS_RST_EVB_REG),
+			 readl(pas->qdsp6ss_base + QDSP6SS_CORE_CBCR),
+			 readl(pas->qdsp6ss_base + QDSP6SS_XO_CBCR),
+			 readl(pas->qdsp6ss_base + QDSP6SS_SLEEP_CBCR),
+			 readl(pas->qdsp6ss_base + QDSP6SS_CORE_START_REG),
+			 readl(pas->qdsp6ss_base + QDSP6SS_BOOT_CMD_REG),
+			 readl(pas->qdsp6ss_base + QDSP6SS_BOOT_STATUS_REG),
+			 &pas->mem_phys, pas->mem_size);
+	}
 
 	ret = qcom_pas_init_clock(pas);
 	if (ret)
