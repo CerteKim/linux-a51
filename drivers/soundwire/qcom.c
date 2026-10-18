@@ -231,6 +231,12 @@ struct qcom_swrm_ctrl {
 	u32 slave_status;
 	u32 wr_fifo_depth;
 	bool clock_stop_not_supported;
+	/*
+	 * The last clock-stop handshake did not complete, so the link has to be
+	 * reset and re-enumerated on the way back up instead of being resumed
+	 * from a clock stop nobody acknowledged.
+	 */
+	bool link_reset_required;
 };
 
 struct qcom_swrm_data {
@@ -1860,23 +1866,7 @@ static int __maybe_unused swrm_runtime_resume(struct device *dev)
 
 	clk_prepare_enable(ctrl->hclk);
 
-	if (ctrl->clock_stop_not_supported) {
-		reinit_completion(&ctrl->enumeration);
-		ctrl->reg_write(ctrl, SWRM_COMP_SW_RESET, 0x01);
-		usleep_range(100, 105);
-
-		qcom_swrm_init(ctrl);
-
-		usleep_range(100, 105);
-		if (!swrm_wait_for_frame_gen_enabled(ctrl))
-			dev_err(ctrl->dev, "link failed to connect\n");
-
-		/* wait for hw enumeration to complete */
-		wait_for_completion_timeout(&ctrl->enumeration,
-					    msecs_to_jiffies(TIMEOUT_MS));
-		qcom_swrm_get_device_status(ctrl);
-		sdw_handle_slave_status(&ctrl->bus, ctrl->status);
-	} else {
+	if (!ctrl->clock_stop_not_supported && !ctrl->link_reset_required) {
 		reset_control_reset(ctrl->audio_cgcr);
 
 		if (ctrl->version == SWRM_VERSION_1_7_0) {
@@ -1906,9 +1896,37 @@ static int __maybe_unused swrm_runtime_resume(struct device *dev)
 			dev_err(ctrl->dev, "link failed to connect\n");
 
 		ret = sdw_bus_exit_clk_stop(&ctrl->bus);
-		if (ret < 0)
-			dev_err(ctrl->dev, "bus failed to exit clock stop %d\n", ret);
+		if (ret >= 0)
+			return 0;
+
+		dev_warn(ctrl->dev,
+			 "bus failed to exit clock stop %d, resetting the link\n",
+			 ret);
 	}
+
+	/*
+	 * Either the Slaves asked for clock-stop mode 1, which this master
+	 * cannot hand off to, or the handshake above never completed because the
+	 * Slaves that had to acknowledge it had already been powered down by
+	 * their own runtime PM.  Both leave behind a bus nobody can address, so
+	 * reset the link and let the hardware enumerate the Slaves again.
+	 */
+	ctrl->link_reset_required = false;
+	reinit_completion(&ctrl->enumeration);
+	ctrl->reg_write(ctrl, SWRM_COMP_SW_RESET, 0x01);
+	usleep_range(100, 105);
+
+	qcom_swrm_init(ctrl);
+
+	usleep_range(100, 105);
+	if (!swrm_wait_for_frame_gen_enabled(ctrl))
+		dev_err(ctrl->dev, "link failed to connect\n");
+
+	/* wait for hw enumeration to complete */
+	wait_for_completion_timeout(&ctrl->enumeration,
+				    msecs_to_jiffies(TIMEOUT_MS));
+	qcom_swrm_get_device_status(ctrl);
+	sdw_handle_slave_status(&ctrl->bus, ctrl->status);
 
 	return 0;
 }
@@ -1928,17 +1946,28 @@ static int __maybe_unused swrm_runtime_suspend(struct device *dev)
 					ctrl->intr_mask);
 		ctrl->reg_write(ctrl, ctrl->reg_layout[SWRM_REG_INTERRUPT_CPU_EN],
 				ctrl->intr_mask);
-		/* Prepare slaves for clock stop */
+		/*
+		 * Prepare slaves for clock stop.  The Slaves on this bus power
+		 * themselves down from their own runtime PM, so the handshake can
+		 * arrive after the last one that could have acknowledged it is
+		 * gone.  That is not a reason to fail the suspend: returning the
+		 * error latches dev->power.runtime_error, after which every
+		 * pm_runtime_resume_and_get() on this device fails with -EINVAL
+		 * and the ASoC card can never open a PCM again until it is
+		 * re-probed.  Reset the link on the way back up instead.
+		 */
 		ret = sdw_bus_prep_clk_stop(&ctrl->bus);
 		if (ret < 0 && ret != -ENODATA) {
-			dev_err(dev, "prepare clock stop failed %d", ret);
-			return ret;
-		}
-
-		ret = sdw_bus_clk_stop(&ctrl->bus);
-		if (ret < 0 && ret != -ENODATA) {
-			dev_err(dev, "bus clock stop failed %d", ret);
-			return ret;
+			dev_warn(dev, "prepare clock stop failed %d, resetting the link on resume\n",
+				 ret);
+			ctrl->link_reset_required = true;
+		} else {
+			ret = sdw_bus_clk_stop(&ctrl->bus);
+			if (ret < 0 && ret != -ENODATA) {
+				dev_warn(dev, "bus clock stop failed %d, resetting the link on resume\n",
+					 ret);
+				ctrl->link_reset_required = true;
+			}
 		}
 	}
 
