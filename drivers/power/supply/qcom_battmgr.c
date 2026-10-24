@@ -1238,11 +1238,15 @@ static void qcom_battmgr_sc8280xp_strcpy(char *dest, const char *src)
 
 static unsigned int qcom_battmgr_sc8280xp_parse_technology(const char *chemistry)
 {
-	if ((!strncmp(chemistry, "LIO", 3)) ||
-	    (!strncmp(chemistry, "OOI", 3)))
+	/*
+	 * The chemistry is a fixed-width four-byte field without a NUL
+	 * terminator, so only the first three characters are significant.
+	 * Some firmware versions use mixed case, e.g. "Lion".
+	 */
+	if (!strncasecmp(chemistry, "LIO", 3) ||
+	    !strncasecmp(chemistry, "OOI", 3))
 		return POWER_SUPPLY_TECHNOLOGY_LION;
-	if (!strncmp(chemistry, "LIP", 3) ||
-	    !strncmp(chemistry, "LiP", 3))
+	if (!strncasecmp(chemistry, "LIP", 3))
 		return POWER_SUPPLY_TECHNOLOGY_LIPO;
 
 	pr_err("Unknown battery technology '%s'\n", chemistry);
