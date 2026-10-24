@@ -13,6 +13,17 @@
 #include <asm/types.h>
 #include <asm/posix_types.h>
 
+/*
+ * The arm64 UAPI headers use __u128 for the SVE register file.  Host
+ * linux-api-headers can be newer than this tree, so provide the same
+ * typedef the kernel UAPI has instead of relying on the host linux/types.h
+ * (which is shadowed by this file).
+ */
+#ifdef __SIZEOF_INT128__
+typedef signed __int128 __s128 __attribute__((aligned(16)));
+typedef unsigned __int128 __u128 __attribute__((aligned(16)));
+#endif
+
 struct page;
 struct kmem_cache;
 
